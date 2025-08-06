@@ -9,6 +9,7 @@ import {
   Input,
   Image as HeroImage,
   Link,
+  Spinner,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
 import {
@@ -386,13 +387,14 @@ function AuthPageContent() {
 export default function AuthPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-gradient-to-br from-primary/10 to-white flex items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardBody className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading...</p>
-          </CardBody>
-        </Card>
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner
+          classNames={{ label: "text-foreground mt-4" }}
+          variant="default"
+          size="lg"
+          color="primary"
+        />
+        {/* <p className="mt-4 text-gray-600">Loading...</p> */}
       </div>
     }>
       <AuthPageContent />

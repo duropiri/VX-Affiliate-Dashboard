@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, optimizedQuery } from './supabase';
 import { User } from '@supabase/supabase-js';
 
 export const signInWithMagicLink = async (email: string) => {
@@ -103,7 +103,7 @@ export const createUserWithPassword = async (email: string, password: string, us
     throw new Error(result.error || 'Failed to create user');
   }
 
-  return result.user;
+  return result;
 };
 
 export const resetPassword = async (email: string) => {
@@ -179,35 +179,25 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
-      // Add timeout to prevent hanging - increased for production
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('isUserApproved timeout')), 10000); // Increased to 10 seconds
-      });
+      // Use optimized query helper for production
+      const queryResult = await optimizedQuery(async () => {
+        return supabase
+          .from('approved_users')
+          .select('user_id')
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .limit(1);
+      }, 10000); // 10 second timeout
       
-      // Optimized query - only select what we need and use limit
-      const queryPromise = supabase
-        .from('approved_users')
-        .select('user_id')
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .limit(1);
+      console.log('isUserApproved query result:', queryResult);
 
-      console.log('Starting database query...');
-      
-      const { data, error } = await Promise.race([
-        queryPromise,
-        timeoutPromise
-      ]) as any;
-
-      console.log('isUserApproved query result:', { data, error });
-
-      if (error) {
-        if (error.code === 'PGRST116') {
+      if (queryResult.error) {
+        if (queryResult.error.code === 'PGRST116') {
           // No rows found - user not approved
           console.log('User not found in approved_users table');
           return false;
         } else {
-          console.error('Error checking user approval:', error);
+          console.error('Error checking user approval:', queryResult.error);
           if (attempt < maxRetries) {
             const delay = baseDelay * Math.pow(2, attempt - 1);
             console.log(`Retrying in ${delay}ms...`);
@@ -218,7 +208,7 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
         }
       }
 
-      const result = !!(data && data.length > 0);
+      const result = !!(queryResult.data && queryResult.data.length > 0);
       console.log('isUserApproved final result:', result);
       return result;
     } catch (error) {

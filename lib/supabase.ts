@@ -5,6 +5,21 @@ export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+// Production-optimized query helper
+export const optimizedQuery = async (queryFn: () => Promise<any>, timeoutMs: number = 8000) => {
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Query timeout')), timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([queryFn(), timeoutPromise]);
+    return result;
+  } catch (error) {
+    console.error('Optimized query failed:', error);
+    throw error;
+  }
+};
+
 // Types for our database
 export interface DashboardKPIs {
   clicks: number;
