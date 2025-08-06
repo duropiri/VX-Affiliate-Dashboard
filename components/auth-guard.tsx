@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { createUserProfile, createReferralCode, getUserProfile, isUserApproved, handlePostGoogleAuth, debugApprovedUsers } from '@/lib/auth';
+import { createUserProfile, createReferralCode, getUserProfile, isUserApproved, handlePostAuth } from '@/lib/auth';
 import { addToast, Spinner } from '@heroui/react';
 
 interface AuthGuardProps {
@@ -119,7 +119,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
           try {
             const approvalPromise = isUserApproved(session.user.id);
             const timeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Approval check timeout')), 5000);
+              setTimeout(() => reject(new Error('Approval check timeout')), 10000); // Increased to 10 seconds
             });
             
             isApproved = await Promise.race([approvalPromise, timeoutPromise]) as boolean;
@@ -133,8 +133,19 @@ export function AuthGuard({ children }: AuthGuardProps) {
           if (!isApproved && session.user.app_metadata?.provider === 'google') {
             console.log('Auth state change - User not approved by ID, trying email cross-reference for Google SSO');
             console.log('Auth state change - User provider:', session.user.app_metadata?.provider);
-            isApproved = await handlePostGoogleAuth(session.user);
-            console.log('Auth state change - Email cross-reference result:', isApproved);
+            
+            try {
+              const emailApprovalPromise = handlePostAuth(session.user);
+              const emailTimeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Email approval check timeout')), 10000);
+              });
+              
+              isApproved = await Promise.race([emailApprovalPromise, emailTimeoutPromise]) as boolean;
+              console.log('Auth state change - Email cross-reference result:', isApproved);
+            } catch (error) {
+              console.error('Auth state change - Email approval check error:', error);
+              isApproved = false;
+            }
           }
           
           console.log('Auth state change - Final user approval status:', isApproved);

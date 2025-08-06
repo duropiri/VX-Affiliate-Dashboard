@@ -11,26 +11,39 @@ import {
   Link,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
-import { signInWithGoogle, signInWithEmail, resetPassword, debugApprovedUsers, isUserApproved, testDatabaseConnection, testSupabaseConnection, checkSupabaseConfig, testSimpleTableQuery, testSimpleQuery, testExactQuery } from "@/lib/auth";
+import {
+  signInWithGoogle,
+  signInWithEmail,
+  resetPassword,
+  debugApprovedUsers,
+  isUserApproved,
+  testDatabaseConnection,
+  testSupabaseConnection,
+  checkSupabaseConfig,
+  testSimpleTableQuery,
+  testSimpleQuery,
+  testExactQuery,
+} from "@/lib/auth";
 import { addToast } from "@heroui/toast";
 import { supabase } from "@/lib/supabase";
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams } from "next/navigation";
 
 export default function AuthPage() {
+  const [showEmailForm, setShowEmailForm] = useState(true);
+  const [showResetForm, setShowResetForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showEmailForm, setShowEmailForm] = useState(true);
-  const [showResetForm, setShowResetForm] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const searchParams = useSearchParams();
-  const error = searchParams.get('error');
+  const error = searchParams.get("error");
 
   useEffect(() => {
-    if (error === 'not-approved') {
+    if (error === "not-approved") {
       addToast({
         title: "Access Denied",
-        description: "Your account is not approved. Please contact an administrator.",
+        description:
+          "Your account is not approved. Please contact an administrator.",
         color: "danger",
       });
     }
@@ -55,19 +68,29 @@ export default function AuthPage() {
     }
   };
 
-  const handleEmailSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleEmailSignIn = async () => {
+    if (!email || !password) {
+      addToast({
+        title: "Error",
+        description: "Please fill in all fields",
+        color: "danger",
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       await signInWithEmail(email, password);
       addToast({
-        title: "Signing in...",
+        title: "Success",
+        description: "Signed in successfully",
         color: "success",
       });
-    } catch (error: any) {
-      console.error("Email sign-in error:", error);
+    } catch (error) {
+      console.error("Sign in error:", error);
       addToast({
-        title: error.message || "Failed to sign in",
+        title: "Error",
+        description: error instanceof Error ? error.message : "Sign in failed",
         color: "danger",
       });
     } finally {
@@ -80,20 +103,31 @@ export default function AuthPage() {
     console.log("Password reset form submitted");
     setLoading(true);
     try {
-      await resetPassword(email);
+      await resetPassword(resetEmail);
 
       addToast({
         title: "Password reset email sent! Check your inbox.",
         color: "success",
       });
       setShowResetForm(false);
-      setShowEmailForm(false);
+      setShowEmailForm(true);
+      setResetEmail("");
     } catch (error: any) {
       console.error("Password reset error:", error);
-      addToast({
-        title: error.message || "Failed to send reset email",
-        color: "danger",
-      });
+      
+      // Handle rate limit error specifically
+      if (error.message?.includes("rate limit")) {
+        addToast({
+          title: "Rate limit exceeded",
+          description: "Please wait about an hour before requesting another reset email.",
+          color: "warning",
+        });
+      } else {
+        addToast({
+          title: error.message || "Failed to send reset email",
+          color: "danger",
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -103,65 +137,68 @@ export default function AuthPage() {
     console.log("Showing reset form");
     setShowResetForm(true);
     setShowEmailForm(false);
-    addToast({
-      title: "Opening password reset form...",
-      color: "primary",
-    });
+    setResetEmail(email); // Pre-fill with current email if available
+    // addToast({
+    //   title: "Opening password reset form...",
+    //   color: "primary",
+    // });
   };
 
   const handleDebugApproval = async () => {
     try {
       console.log("Debugging approval system...");
-      
+
       // Test 0: Check Supabase configuration
       const config = checkSupabaseConfig();
       console.log("Supabase config check:", config);
       addToast({
-        title: `Config: ${config.urlExists && config.anonKeyExists ? 'OK' : 'FAILED'}`,
+        title: `Config: ${config.urlExists && config.anonKeyExists ? "OK" : "FAILED"}`,
         description: `URL: ${config.urlExists}, Key: ${config.anonKeyExists}`,
         color: config.urlExists && config.anonKeyExists ? "success" : "danger",
       });
-      
+
       // Test 1: Basic Supabase connection
       const connectionTest = await testSupabaseConnection();
       console.log("Supabase connection test:", connectionTest);
       addToast({
-        title: `Supabase connection: ${connectionTest.success ? 'OK' : 'FAILED'}`,
+        title: `Supabase connection: ${connectionTest.success ? "OK" : "FAILED"}`,
         description: connectionTest.error,
         color: connectionTest.success ? "success" : "danger",
       });
-      
+
       // Test 2: Simple query test
       const simpleQueryTest = await testSimpleQuery();
       console.log("Simple query test:", simpleQueryTest);
       addToast({
-        title: `Simple query: ${simpleQueryTest ? 'OK' : 'FAILED'}`,
+        title: `Simple query: ${simpleQueryTest ? "OK" : "FAILED"}`,
         color: simpleQueryTest ? "success" : "danger",
       });
-      
+
       // Test 3: Simple table query
       const simpleTableTest = await testSimpleTableQuery();
       console.log("Simple table test:", simpleTableTest);
       addToast({
-        title: `Simple table query: ${simpleTableTest.success ? 'OK' : 'FAILED'}`,
+        title: `Simple table query: ${simpleTableTest.success ? "OK" : "FAILED"}`,
         description: simpleTableTest.error,
         color: simpleTableTest.success ? "success" : "danger",
       });
-      
+
       // Test 4: Database health check
       const dbHealthy = await testDatabaseConnection();
       console.log("Database healthy:", dbHealthy);
       addToast({
-        title: `Database connection: ${dbHealthy ? 'OK' : 'FAILED'}`,
+        title: `Database connection: ${dbHealthy ? "OK" : "FAILED"}`,
         color: dbHealthy ? "success" : "danger",
       });
-      
+
       // Test 3: Check approved users table
       const approvedUsers = await debugApprovedUsers();
       console.log("Approved users:", approvedUsers);
-      
+
       // Test 4: Check if current user is approved
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
         const isApproved = await isUserApproved(user.id);
         console.log("Current user approved:", isApproved);
@@ -177,12 +214,14 @@ export default function AuthPage() {
       }
 
       // Test exact query that's failing
-      const exactQueryResult = await testExactQuery('996c5b3a-3bd6-47f1-a5b5-073bcdda2f85');
+      const exactQueryResult = await testExactQuery(
+        "996c5b3a-3bd6-47f1-a5b5-073bcdda2f85"
+      );
       addToast({
-        title: `Exact query test: ${exactQueryResult ? 'SUCCESS' : 'FAILED'}`,
+        title: `Exact query test: ${exactQueryResult ? "SUCCESS" : "FAILED"}`,
         color: exactQueryResult ? "success" : "danger",
       });
-      console.log('Exact query test:', exactQueryResult);
+      console.log("Exact query test:", exactQueryResult);
     } catch (error) {
       console.error("Debug error:", error);
       addToast({
@@ -235,44 +274,26 @@ export default function AuthPage() {
               </div>
             </div>
 
-            {!showEmailForm && !showResetForm ? (
-              <Button
-                color="primary"
-                variant="bordered"
-                className="w-full"
-                onPress={() => {
-                  console.log("Sign in with Email button clicked");
-                  setShowEmailForm(true);
-                }}
-              >
-                Sign in with Email
-              </Button>
-            ) : showEmailForm ? (
-              <form onSubmit={handleEmailSignIn} className="space-y-4">
+            {showEmailForm ? (
+              <div className="space-y-4">
                 <Input
                   type="email"
-                  label="Email Address"
-                  placeholder="Enter your email"
+                  label="Email"
                   value={email}
                   onValueChange={setEmail}
                   isRequired
-                  variant="bordered"
                 />
-
                 <Input
                   type="password"
                   label="Password"
-                  placeholder="Enter your password"
                   value={password}
                   onValueChange={setPassword}
                   isRequired
-                  variant="bordered"
                 />
-
                 <Button
-                  type="submit"
                   color="primary"
                   className="w-full"
+                  onPress={handleEmailSignIn}
                   isLoading={loading}
                 >
                   Sign In
@@ -289,15 +310,15 @@ export default function AuthPage() {
                     Forgot Password?
                   </Button>
                 </div>
-              </form>
+              </div>
             ) : (
               <form onSubmit={handlePasswordReset} className="space-y-4">
                 <Input
                   type="email"
                   label="Email Address"
                   placeholder="Enter your email"
-                  value={email}
-                  onValueChange={setEmail}
+                  value={resetEmail}
+                  onValueChange={setResetEmail}
                   isRequired
                   variant="bordered"
                 />
@@ -316,14 +337,17 @@ export default function AuthPage() {
                   color="default"
                   variant="light"
                   className="w-full"
-                  onPress={() => setShowResetForm(false)}
+                  onPress={() => {
+                    console.log("Back to Sign In button clicked");
+                    setShowResetForm(false);
+                    setShowEmailForm(true);
+                    setResetEmail("");
+                  }}
                 >
                   Back to Sign In
                 </Button>
               </form>
             )}
-
-            
 
             <div className="text-center space-y-2">
               <p className="text-sm text-gray-500">
@@ -342,15 +366,15 @@ export default function AuthPage() {
               >
                 Not an affiliate? Apply here →
               </Link>
-              
-              <Button
+
+              {/* <Button
                 size="sm"
                 variant="light"
                 onPress={handleDebugApproval}
                 className="mt-2"
               >
                 Debug Approval System
-              </Button>
+              </Button> */}
             </div>
           </div>
         </CardBody>

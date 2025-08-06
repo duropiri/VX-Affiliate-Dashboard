@@ -15,11 +15,15 @@ export const signInWithMagicLink = async (email: string) => {
 };
 
 export const signInWithGoogle = async () => {
+  // Use callback for local development, direct redirect for production
+  const redirectTo = process.env.NODE_ENV === 'development' 
+    ? `${window.location.origin}/auth/callback`
+    : `${window.location.origin}/home`;
+
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      // Point at our callback so we can run the approval check
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo,
       queryParams: {
         access_type: 'offline',
         prompt: 'consent',
@@ -43,7 +47,7 @@ export const signInWithGithub = async () => {
 };
 
 export const signInWithEmail = async (email: string, password: string) => {
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
@@ -51,6 +55,32 @@ export const signInWithEmail = async (email: string, password: string) => {
   if (error) {
     throw error;
   }
+
+  // Check approval status
+  const approved = await handlePostAuth(data.user);
+  if (!approved) {
+    await supabase.auth.signOut();
+    throw new Error('Account not approved');
+  }
+
+  return data;
+};
+
+export const signUpWithEmail = async (
+  email: string,
+  password: string,
+  userData: Record<string, any>
+) => {
+  // Call our admin endpoint
+  const res = await fetch('/api/admin/create-user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, userData }),
+  });
+  
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Sign-up failed');
+  return json;
 };
 
 export const createUserWithPassword = async (email: string, password: string, userData: any) => {
@@ -78,7 +108,7 @@ export const createUserWithPassword = async (email: string, password: string, us
 
 export const resetPassword = async (email: string) => {
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/auth`,
+    redirectTo: `${window.location.origin}/auth/reset-password`,
   });
   
   if (error) {
@@ -262,10 +292,10 @@ export const debugApprovedUsers = async () => {
   }
 };
 
-// Handle post-authentication flow for Google SSO
-export const handlePostGoogleAuth = async (user: User) => {
+// Handle post-authentication flow for all auth methods
+export const handlePostAuth = async (user: User) => {
   try {
-    console.log('Handling post-Google auth for user:', user.email);
+    console.log('Handling post-auth for user:', user.email);
     console.log('User ID:', user.id);
     console.log('User metadata:', user.user_metadata);
     
@@ -274,7 +304,7 @@ export const handlePostGoogleAuth = async (user: User) => {
     console.log('Initial approval check result:', isApproved);
     
     if (!isApproved) {
-      // Check if user is approved by email (cross-reference for Google SSO)
+      // Check if user is approved by email (cross-reference for OAuth)
       console.log('User not approved by ID, checking by email:', user.email);
       
       const { data: approvedUser, error: approvalError } = await supabase
@@ -320,10 +350,10 @@ export const handlePostGoogleAuth = async (user: User) => {
       }
     }
 
-    console.log('handlePostGoogleAuth final result:', isApproved);
+    console.log('handlePostAuth final result:', isApproved);
     return isApproved;
   } catch (error) {
-    console.error('Error in post-Google auth handling:', error);
+    console.error('Error in post-auth handling:', error);
     return false;
   }
 };
