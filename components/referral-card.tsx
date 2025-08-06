@@ -1,0 +1,106 @@
+"use client";
+
+import { useState } from "react";
+import { Card, CardBody, Button, Link as HeroUILink } from "@heroui/react";
+import { Copy, ExternalLink } from "lucide-react";
+import { addToast } from "@heroui/toast";
+import { FiLink } from "react-icons/fi";
+import { FaFacebookF, FaTwitter } from "react-icons/fa";
+
+interface ReferralCardProps {
+  referralCode: string;
+}
+
+export function ReferralCard({ referralCode }: ReferralCardProps) {
+  const referralUrl = `https://affiliate.virtualxposure.com/pages/order?ref=${referralCode}`;
+
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(referralUrl);
+      addToast({
+        title: "Referral link copied to clipboard!",
+        color: "success",
+      });
+    } catch (error) {
+      addToast({
+        title: "Failed to copy link",
+        color: "danger",
+      });
+    }
+  };
+
+  const shareOnTwitter = () => {
+    const text = "Check out this amazing platform!";
+    const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(referralUrl)}`;
+    window.open(url, "_blank");
+  };
+
+  const shareOnFacebook = () => {
+    const url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(referralUrl)}`;
+    window.open(url, "_blank");
+  };
+
+  return (
+    <Card className="border-2 border-primary/20">
+      <CardBody className="p-6">
+        <h3 className="text-lg font-semibold mb-4 text-gray-800">
+          Your Referral Link (Share This)
+        </h3>
+        <p className="text-sm text-gray-600 mb-4">
+          This is <strong>your unique link</strong> to track your signups &{" "}
+          <u>earn prizes.</u>
+          <br />
+          <br />
+          Send this to your email list, slack group, communities, message your
+          friends, post on social media, etc.
+        </p>
+
+        <div className="flex flex-col md:flex-row items-center gap-2 p-3 bg-gray-100 rounded-lg mb-4">
+          <HeroUILink
+            isExternal
+            // showAnchorIcon
+            // anchorIcon={<FiLink size={16} />}
+            underline="hover"
+            href={referralUrl}
+            target="_blank"
+            className="flex-1 w-full text-sm text-primary font-medium truncate"
+          >
+            <FiLink size={16} className="mr-2" />
+            {referralUrl.toLowerCase()}
+          </HeroUILink>
+          <div className="flex gap-2">
+            <Button
+              color="primary"
+              variant="solid"
+              isIconOnly
+              onPress={copyToClipboard}
+              aria-label="Copy Link"
+            >
+              <Copy size={16} />
+            </Button>
+
+            <Button
+              color="default"
+              variant="bordered"
+              isIconOnly
+              onPress={shareOnTwitter}
+              aria-label="Share on Twitter"
+            >
+              <FaTwitter size={16} />
+            </Button>
+
+            <Button
+              color="default"
+              variant="bordered"
+              isIconOnly
+              onPress={shareOnFacebook}
+              aria-label="Share on Facebook"
+            >
+              <FaFacebookF size={16} />
+            </Button>
+          </div>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
