@@ -179,17 +179,18 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
-      // Add timeout to prevent hanging
+      // Add timeout to prevent hanging - increased for production
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('isUserApproved timeout')), 5000); // Increased to 5 seconds
+        setTimeout(() => reject(new Error('isUserApproved timeout')), 10000); // Increased to 10 seconds
       });
       
+      // Optimized query - only select what we need and use limit
       const queryPromise = supabase
         .from('approved_users')
-        .select('user_id, status')
+        .select('user_id')
         .eq('user_id', userId)
         .eq('status', 'active')
-        .single();
+        .limit(1);
 
       console.log('Starting database query...');
       
@@ -217,7 +218,7 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
         }
       }
 
-      const result = !!data;
+      const result = !!(data && data.length > 0);
       console.log('isUserApproved final result:', result);
       return result;
     } catch (error) {

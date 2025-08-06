@@ -26,7 +26,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         setLoading(false);
         router.push('/auth');
       }
-    }, 15000); // Increased to 15 second timeout
+    }, 30000); // Increased to 30 second timeout for production
 
     return () => clearTimeout(timeout);
   }, [loading, router]);
@@ -44,19 +44,34 @@ export function AuthGuard({ children }: AuthGuardProps) {
         // Check if user is approved (simplified for speed)
         console.log('Checking user approval for:', user.email, 'ID:', user.id);
         
-        // Check user approval with timeout
+        // Check user approval with increased timeout for production
         let isApproved = false;
         try {
           const approvalPromise = isUserApproved(user.id);
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Approval check timeout')), 5000);
+            setTimeout(() => reject(new Error('Approval check timeout')), 15000); // Increased to 15 seconds
           });
           
           isApproved = await Promise.race([approvalPromise, timeoutPromise]) as boolean;
           console.log('User approval result:', isApproved);
         } catch (error) {
           console.error('Approval check error:', error);
-          isApproved = false;
+          // Don't immediately redirect on timeout, try a simpler check
+          try {
+            // Try a simpler query as fallback
+            const { data, error } = await supabase
+              .from('approved_users')
+              .select('user_id')
+              .eq('user_id', user.id)
+              .eq('status', 'active')
+              .limit(1);
+            
+            isApproved = !error && data && data.length > 0;
+            console.log('Fallback approval check result:', isApproved);
+          } catch (fallbackError) {
+            console.error('Fallback approval check failed:', fallbackError);
+            isApproved = false;
+          }
         }
         
         if (!isApproved) {
@@ -100,105 +115,108 @@ export function AuthGuard({ children }: AuthGuardProps) {
     };
 
     checkUser();
+  }, [router]);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state change:', event, session?.user?.email);
+  // Listen for auth state changes
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth state change:', event, session?.user?.email);
+      
+      if (event === 'SIGNED_IN' && session?.user) {
+        console.log('Auth state change - checking user approval for:', session.user.email, 'ID:', session.user.id);
         
-        if (event === 'SIGNED_OUT' || !session) {
-          setUser(null);
-          setApproved(false);
-          setLoading(false);
-          router.push('/auth');
-        } else if (session?.user) {
-          // Check if user is approved (with email cross-referencing for Google SSO)
-          console.log('Auth state change - checking user approval for:', session.user.email, 'ID:', session.user.id);
+        try {
+          // Handle post-auth processing
+          const approved = await handlePostAuth(session.user);
+          console.log('Auth state change - Final user approval status:', approved);
           
-          // Check user approval with timeout
-          let isApproved = false;
-          try {
-            const approvalPromise = isUserApproved(session.user.id);
-            const timeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Approval check timeout')), 10000); // Increased to 10 seconds
-            });
-            
-            isApproved = await Promise.race([approvalPromise, timeoutPromise]) as boolean;
-            console.log('Auth state change - initial approval check result:', isApproved);
-          } catch (error) {
-            console.error('Auth state change - Approval check error:', error);
-            isApproved = false;
-          }
-          
-          // If not approved by user ID, try email cross-referencing for Google SSO
-          if (!isApproved && session.user.app_metadata?.provider === 'google') {
-            console.log('Auth state change - User not approved by ID, trying email cross-reference for Google SSO');
-            console.log('Auth state change - User provider:', session.user.app_metadata?.provider);
-            
-            try {
-              const emailApprovalPromise = handlePostAuth(session.user);
-              const emailTimeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Email approval check timeout')), 10000);
-              });
-              
-              isApproved = await Promise.race([emailApprovalPromise, emailTimeoutPromise]) as boolean;
-              console.log('Auth state change - Email cross-reference result:', isApproved);
-            } catch (error) {
-              console.error('Auth state change - Email approval check error:', error);
-              isApproved = false;
-            }
-          }
-          
-          console.log('Auth state change - Final user approval status:', isApproved);
-          
-          console.log('About to check if user is approved from auth state change. isApproved =', isApproved);
-          
-          if (!isApproved) {
+          if (approved) {
+            console.log('About to check if user is approved from auth state change. isApproved =', approved);
+            setUser(session.user);
+            setApproved(true);
+            setLoading(false);
+            console.log('✅ User is approved from auth state change, proceeding to dashboard');
+          } else {
             console.log('❌ User not approved from auth state change, redirecting to auth');
             setUser(null);
-            setApproved(false);
             setLoading(false);
             router.push('/auth');
-            return;
+          }
+        } catch (error) {
+          console.error('Auth state change - Approval check error:', error);
+          
+          // Try email cross-reference for Google SSO
+          if (session.user.app_metadata?.provider === 'google') {
+            console.log('Auth state change - User provider: google');
+            try {
+              const { data, error } = await supabase
+                .from('approved_users')
+                .select('*')
+                .eq('user_email', session.user.email)
+                .eq('status', 'active')
+                .single();
+              
+              console.log('Email approval check result:', { approvedUser: data, approvalError: error });
+              
+              if (error && error.code !== 'PGRST116') {
+                console.error('Error checking approval by email:', error);
+              } else if (data) {
+                console.log('User approved by email cross-reference, updating user_id');
+                
+                // Update the approval record with the new user ID
+                const { error: updateError } = await supabase
+                  .from('approved_users')
+                  .update({ user_id: session.user.id })
+                  .eq('user_email', session.user.email);
+                
+                if (updateError) {
+                  console.error('Error updating approval record:', updateError);
+                } else {
+                  console.log('Successfully updated approval record with new user ID');
+                }
+                
+                setUser(session.user);
+                setApproved(true);
+                setLoading(false);
+                console.log('✅ User approved by email cross-reference');
+                return;
+              }
+            } catch (emailError) {
+              console.error('Auth state change - Email approval check error:', emailError);
+            }
           }
           
-          console.log('✅ User is approved from auth state change, proceeding to dashboard');
-          
-          // Set user and approval status
-          console.log('Auth state change - Setting user state:', session.user.email);
-          setUser(session.user);
-          console.log('Auth state change - Setting approved state: true');
-          setApproved(true);
-          console.log('Auth state change - Setting loading state: false');
+          console.log('❌ User not approved from auth state change, redirecting to auth');
+          setUser(null);
           setLoading(false);
-          
-          // Try to set up user profile in background (non-blocking)
-          setTimeout(async () => {
-            try {
-              const profile = await getUserProfile(session.user.id);
-              if (!profile) {
-                console.log('Creating user profile from auth state change...');
-                await createUserProfile(session.user);
-                await createReferralCode(session.user.id);
-                console.log('User profile created successfully from auth state change');
-              }
-            } catch (error) {
-              console.error('Error setting up user profile from auth state change (non-critical):', error);
-            }
-          }, 1000); // Delay profile creation to not block rendering
+          router.push('/auth');
         }
+      } else if (event === 'SIGNED_OUT') {
+        console.log('User signed out');
+        setUser(null);
+        setApproved(false);
+        setLoading(false);
+        router.push('/auth');
       }
-    );
+    });
 
     return () => subscription.unsubscribe();
   }, [router]);
 
   console.log('AuthGuard render - loading:', loading, 'user:', !!user, 'approved:', approved);
-  
+
   if (loading) {
     console.log('AuthGuard showing loading spinner');
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Spinner classNames={{label: "text-foreground mt-4"}} variant="default" size="lg" />
+        <div className="text-center">
+          <Spinner 
+            classNames={{label: "text-foreground mt-4"}} 
+            variant="default" 
+            size="lg"
+          />
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
       </div>
     );
   }
