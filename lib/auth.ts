@@ -18,17 +18,15 @@ export const signInWithGoogle = async () => {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/home`,
+      // Point at our callback so we can run the approval check
+      redirectTo: `${window.location.origin}/auth/callback`,
       queryParams: {
         access_type: 'offline',
         prompt: 'consent',
       },
     },
   });
-  
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 };
 
 export const signInWithGithub = async () => {
@@ -100,57 +98,114 @@ export const getUser = async (): Promise<User | null> => {
   return user;
 };
 
+// Wait for Supabase client to be ready
+const waitForSupabaseReady = async (maxWait = 5000): Promise<boolean> => {
+  console.log('Starting Supabase client readiness check...');
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWait) {
+    try {
+      console.log('Testing Supabase client connection...');
+      // Test a simple query to see if client is ready
+      const { data, error } = await supabase
+        .from('approved_users')
+        .select('count')
+        .limit(1);
+      
+      console.log('Readiness test result:', { data, error });
+      
+      if (!error) {
+        console.log('Supabase client is ready');
+        return true;
+      } else {
+        console.log('Supabase client not ready yet, error:', error);
+      }
+    } catch (error) {
+      console.log('Supabase client readiness test failed:', error);
+      // Client not ready yet
+    }
+    
+    // Wait 100ms before next attempt
+    console.log('Waiting 100ms before next readiness test...');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  
+  console.warn('Supabase client not ready after timeout');
+  return false;
+};
+
 // Check if user is approved to access the affiliate portal
 export const isUserApproved = async (userId: string): Promise<boolean> => {
-  try {
-    console.log('Checking isUserApproved for user ID:', userId);
-    
-    // TEMPORARY: Hardcode approval for known users to bypass database timeout issues
-    const approvedUserIds = [
-      '7c2d0c8a-54f7-4650-b063-f44721d708a3', // Original user
-      '996c5b3a-3bd6-47f1-a5b5-073bcdda2f85'  // New Google SSO user
-    ];
-    
-    const isApproved = approvedUserIds.includes(userId);
-    console.log('isUserApproved hardcoded result:', isApproved);
-    return isApproved;
-    
-    /* Original database query (commented out due to timeout issues)
-    // Skip RPC function for now - it might not exist or be failing
-    console.log('Skipping RPC, using direct database query');
-    
-    // Direct database query with timeout
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Database query timeout')), 5000);
-    });
-    
-    const queryPromise = supabase
-      .from('approved_users')
-      .select('user_id')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .single();
+  const maxRetries = 3;
+  const baseDelay = 1000; // Increased to 1 second base delay
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Checking isUserApproved for user ID: ${userId} (attempt ${attempt}/${maxRetries})`);
+      
+      // Simple delay to let OAuth flow complete
+      if (attempt === 1) {
+        console.log('Waiting 2 seconds for OAuth flow to complete...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('isUserApproved timeout')), 5000); // Increased to 5 seconds
+      });
+      
+      const queryPromise = supabase
+        .from('approved_users')
+        .select('user_id, status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
 
-    const { data: directData, error: directError } = await Promise.race([
-      queryPromise,
-      timeoutPromise
-    ]) as any;
+      console.log('Starting database query...');
+      
+      const { data, error } = await Promise.race([
+        queryPromise,
+        timeoutPromise
+      ]) as any;
 
-    console.log('Direct query result:', { directData, directError });
+      console.log('isUserApproved query result:', { data, error });
 
-    if (directError && directError.code !== 'PGRST116') {
-      console.error('Error in direct query:', directError);
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows found - user not approved
+          console.log('User not found in approved_users table');
+          return false;
+        } else {
+          console.error('Error checking user approval:', error);
+          if (attempt < maxRetries) {
+            const delay = baseDelay * Math.pow(2, attempt - 1);
+            console.log(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          return false;
+        }
+      }
+
+      const result = !!data;
+      console.log('isUserApproved final result:', result);
+      return result;
+    } catch (error) {
+      console.error(`Error checking user approval (attempt ${attempt}):`, error);
+      console.error('Error type:', typeof error);
+      console.error('Error message:', error instanceof Error ? error.message : 'Unknown error');
+      
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
       return false;
     }
-
-    const result = !!directData;
-    console.log('isUserApproved final result (direct query):', result);
-    return result;
-    */
-  } catch (error) {
-    console.error('Error checking user approval:', error);
-    return false;
   }
+  
+  return false;
 };
 
 // Check if an email is approved (for cross-referencing)
@@ -214,56 +269,59 @@ export const handlePostGoogleAuth = async (user: User) => {
     console.log('User ID:', user.id);
     console.log('User metadata:', user.user_metadata);
     
-    // TEMPORARY: Hardcode approval for known email to bypass database timeout issues
-    const approvedEmails = ['duro@virtualxposure.com'];
-    const isApproved = approvedEmails.includes(user.email || '');
-    console.log('handlePostGoogleAuth hardcoded result:', isApproved);
-    return isApproved;
+    // First check if user is approved by user ID
+    let isApproved = await isUserApproved(user.id);
+    console.log('Initial approval check result:', isApproved);
     
-    /* Original database query (commented out due to timeout issues)
-    // Check if user is approved by email (cross-reference)
-    console.log('Checking approved_users table for email:', user.email);
-    const { data: approvedUser, error: approvalError } = await supabase
-      .from('approved_users')
-      .select('*')
-      .eq('user_email', user.email)
-      .eq('status', 'active')
-      .single();
-
-    console.log('Approval check result:', { approvedUser, approvalError });
-
-    if (approvalError && approvalError.code !== 'PGRST116') {
-      console.error('Error checking approval by email:', approvalError);
-      return false;
-    }
-
-    if (approvedUser) {
-      console.log('User approved by email cross-reference, approvedUser:', approvedUser);
+    if (!isApproved) {
+      // Check if user is approved by email (cross-reference for Google SSO)
+      console.log('User not approved by ID, checking by email:', user.email);
       
-      // Update the auth user's approval record if needed
-      console.log('Upserting approval record for user ID:', user.id);
-      const { error: updateError } = await supabase
+      const { data: approvedUser, error: approvalError } = await supabase
         .from('approved_users')
-        .upsert({
-          user_id: user.id,
-          user_email: user.email,
-          approved_by: user.id, // Self-approval for existing approved users
-          status: 'active',
-          notes: 'Approved via Google SSO - email cross-reference',
-        });
+        .select('*')
+        .eq('user_email', user.email)
+        .eq('status', 'active')
+        .single();
 
-      if (updateError) {
-        console.error('Error updating approval record:', updateError);
-      } else {
-        console.log('Successfully updated approval record');
+      console.log('Email approval check result:', { approvedUser, approvalError });
+
+      if (approvalError) {
+        if (approvalError.code === 'PGRST116') {
+          // No approved user found with this email
+          console.log('No approved user found with this email');
+          return false;
+        } else {
+          console.error('Error checking approval by email:', approvalError);
+          return false;
+        }
       }
 
-      return true;
+      if (approvedUser) {
+        console.log('User approved by email cross-reference, updating user_id');
+        
+        // Update the approval record with the new user ID
+        const { error: updateError } = await supabase
+          .from('approved_users')
+          .update({
+            user_id: user.id,
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_email', user.email);
+
+        if (updateError) {
+          console.error('Error updating approval record:', updateError);
+          // Even if update fails, user is still approved
+          isApproved = true;
+        } else {
+          console.log('Successfully updated approval record with new user ID');
+          isApproved = true;
+        }
+      }
     }
 
-    console.log('User not approved by email cross-reference - no approved user found');
-    return false;
-    */
+    console.log('handlePostGoogleAuth final result:', isApproved);
+    return isApproved;
   } catch (error) {
     console.error('Error in post-Google auth handling:', error);
     return false;
@@ -1075,5 +1133,192 @@ export const calculateUserReportsTotals = async (): Promise<{
   } catch (error) {
     console.error('Error calculating user reports totals:', error);
     return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
+  }
+};
+
+// Database health check function
+export const testDatabaseConnection = async (): Promise<boolean> => {
+  try {
+    console.log('Testing database connection...');
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Database health check timeout')), 3000);
+    });
+    
+    const queryPromise = supabase
+      .from('approved_users')
+      .select('count')
+      .limit(1);
+
+    const { data, error } = await Promise.race([
+      queryPromise,
+      timeoutPromise
+    ]) as any;
+
+    console.log('Database health check result:', { data, error });
+    
+    if (error) {
+      console.error('Database health check failed:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        fullError: error
+      });
+      return false;
+    }
+    
+    console.log('Database connection successful');
+    return true;
+  } catch (error) {
+    console.error('Database health check error:', error);
+    console.error('Error type:', typeof error);
+    console.error('Error constructor:', error?.constructor?.name);
+    console.error('Full error object:', error);
+    return false;
+  }
+};
+
+// Simple connection test to diagnose Supabase issues
+export const testSupabaseConnection = async (): Promise<{success: boolean, error?: string}> => {
+  try {
+    console.log('Testing basic Supabase connection...');
+    
+    // Test 1: Basic auth connection
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    console.log('Auth connection test:', { user: !!user, error: authError });
+    
+    // Test 2: Simple database query
+    const { data, error } = await supabase
+      .from('approved_users')
+      .select('count')
+      .limit(1);
+    
+    console.log('Database connection test:', { data, error });
+    
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Supabase connection test failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+};
+
+// Simple table test to isolate the issue
+export const testSimpleTableQuery = async (): Promise<{success: boolean, error?: string}> => {
+  try {
+    console.log('Testing simple table query...');
+    
+    // Try a simple query on any table
+    const { data, error } = await supabase
+      .from('affiliate_profiles')
+      .select('count')
+      .limit(1);
+    
+    console.log('Simple table query result:', { data, error });
+    
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Simple table query failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+};
+
+// Check Supabase configuration
+export const checkSupabaseConfig = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  
+  console.log('Supabase configuration check:');
+  console.log('URL exists:', !!url);
+  console.log('URL starts with https:', url?.startsWith('https://'));
+  console.log('Anon key exists:', !!anonKey);
+  console.log('Anon key length:', anonKey?.length);
+  
+  return {
+    urlExists: !!url,
+    urlValid: url?.startsWith('https://'),
+    anonKeyExists: !!anonKey,
+    anonKeyLength: anonKey?.length
+  };
+};
+
+// Simple test to check database connectivity
+export const testSimpleQuery = async (): Promise<boolean> => {
+  try {
+    console.log('Testing simple database query...');
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Simple query timeout')), 2000);
+    });
+    
+    const queryPromise = supabase
+      .from('approved_users')
+      .select('count')
+      .limit(1);
+
+    const { data, error } = await Promise.race([
+      queryPromise,
+      timeoutPromise
+    ]) as any;
+
+    console.log('Simple query result:', { data, error });
+    
+    if (error) {
+      console.error('Simple query failed:', error);
+      return false;
+    }
+    
+    console.log('Simple query successful');
+    return true;
+  } catch (error) {
+    console.error('Simple query error:', error);
+    return false;
+  }
+};
+
+// Test the exact query that's failing
+export const testExactQuery = async (userId: string): Promise<boolean> => {
+  try {
+    console.log('Testing exact query for user ID:', userId);
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Exact query timeout')), 2000);
+    });
+    
+    const queryPromise = supabase
+      .from('approved_users')
+      .select('user_id, status')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .single();
+
+    console.log('Starting exact query...');
+    const { data, error } = await Promise.race([
+      queryPromise,
+      timeoutPromise
+    ]) as any;
+    
+    console.log('Exact query result:', { data, error });
+    
+    if (error) {
+      console.error('Exact query error:', error);
+      return false;
+    }
+    
+    const result = !!data;
+    console.log('Exact query final result:', result);
+    return result;
+  } catch (error) {
+    console.error('Exact query error:', error);
+    return false;
   }
 };

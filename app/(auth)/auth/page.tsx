@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   CardBody,
@@ -8,10 +8,13 @@ import {
   Button,
   Input,
   Image as HeroImage,
+  Link,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
-import { signInWithGoogle, signInWithEmail, resetPassword } from "@/lib/auth";
+import { signInWithGoogle, signInWithEmail, resetPassword, debugApprovedUsers, isUserApproved, testDatabaseConnection, testSupabaseConnection, checkSupabaseConfig, testSimpleTableQuery, testSimpleQuery, testExactQuery } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
+import { supabase } from "@/lib/supabase";
+import { useSearchParams } from 'next/navigation';
 
 export default function AuthPage() {
   const [loading, setLoading] = useState(false);
@@ -19,6 +22,19 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [showEmailForm, setShowEmailForm] = useState(true);
   const [showResetForm, setShowResetForm] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const searchParams = useSearchParams();
+  const error = searchParams.get('error');
+
+  useEffect(() => {
+    if (error === 'not-approved') {
+      addToast({
+        title: "Access Denied",
+        description: "Your account is not approved. Please contact an administrator.",
+        color: "danger",
+      });
+    }
+  }, [error]);
 
   const handleGoogleSignIn = async () => {
     setLoading(true);
@@ -85,13 +101,96 @@ export default function AuthPage() {
 
   const handleShowResetForm = () => {
     console.log("Showing reset form");
-    alert("Forgot Password button clicked!"); // Temporary test
     setShowResetForm(true);
     setShowEmailForm(false);
     addToast({
       title: "Opening password reset form...",
       color: "primary",
     });
+  };
+
+  const handleDebugApproval = async () => {
+    try {
+      console.log("Debugging approval system...");
+      
+      // Test 0: Check Supabase configuration
+      const config = checkSupabaseConfig();
+      console.log("Supabase config check:", config);
+      addToast({
+        title: `Config: ${config.urlExists && config.anonKeyExists ? 'OK' : 'FAILED'}`,
+        description: `URL: ${config.urlExists}, Key: ${config.anonKeyExists}`,
+        color: config.urlExists && config.anonKeyExists ? "success" : "danger",
+      });
+      
+      // Test 1: Basic Supabase connection
+      const connectionTest = await testSupabaseConnection();
+      console.log("Supabase connection test:", connectionTest);
+      addToast({
+        title: `Supabase connection: ${connectionTest.success ? 'OK' : 'FAILED'}`,
+        description: connectionTest.error,
+        color: connectionTest.success ? "success" : "danger",
+      });
+      
+      // Test 2: Simple query test
+      const simpleQueryTest = await testSimpleQuery();
+      console.log("Simple query test:", simpleQueryTest);
+      addToast({
+        title: `Simple query: ${simpleQueryTest ? 'OK' : 'FAILED'}`,
+        color: simpleQueryTest ? "success" : "danger",
+      });
+      
+      // Test 3: Simple table query
+      const simpleTableTest = await testSimpleTableQuery();
+      console.log("Simple table test:", simpleTableTest);
+      addToast({
+        title: `Simple table query: ${simpleTableTest.success ? 'OK' : 'FAILED'}`,
+        description: simpleTableTest.error,
+        color: simpleTableTest.success ? "success" : "danger",
+      });
+      
+      // Test 4: Database health check
+      const dbHealthy = await testDatabaseConnection();
+      console.log("Database healthy:", dbHealthy);
+      addToast({
+        title: `Database connection: ${dbHealthy ? 'OK' : 'FAILED'}`,
+        color: dbHealthy ? "success" : "danger",
+      });
+      
+      // Test 3: Check approved users table
+      const approvedUsers = await debugApprovedUsers();
+      console.log("Approved users:", approvedUsers);
+      
+      // Test 4: Check if current user is approved
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const isApproved = await isUserApproved(user.id);
+        console.log("Current user approved:", isApproved);
+        addToast({
+          title: `Current user approved: ${isApproved}`,
+          color: isApproved ? "success" : "danger",
+        });
+      } else {
+        addToast({
+          title: "No current user found",
+          color: "warning",
+        });
+      }
+
+      // Test exact query that's failing
+      const exactQueryResult = await testExactQuery('996c5b3a-3bd6-47f1-a5b5-073bcdda2f85');
+      addToast({
+        title: `Exact query test: ${exactQueryResult ? 'SUCCESS' : 'FAILED'}`,
+        color: exactQueryResult ? "success" : "danger",
+      });
+      console.log('Exact query test:', exactQueryResult);
+    } catch (error) {
+      console.error("Debug error:", error);
+      addToast({
+        title: "Debug failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        color: "danger",
+      });
+    }
   };
 
   // Debug state values
@@ -131,11 +230,8 @@ export default function AuthPage() {
             </Button>
 
             <div className="relative my-4">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">or</span>
+                <span className="px-2 text-primary">or</span>
               </div>
             </div>
 
@@ -236,14 +332,25 @@ export default function AuthPage() {
               <p className="text-xs text-gray-400">
                 Google SSO will link to existing approved accounts by email
               </p>
-              <a
+              <Link
                 href="https://api.leadconnectorhq.com/widget/form/1R5iyXWWm6IgKBpqZffb"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-primary hover:underline"
+                color="primary"
+                underline="hover"
+                className="text-sm"
               >
                 Not an affiliate? Apply here →
-              </a>
+              </Link>
+              
+              <Button
+                size="sm"
+                variant="light"
+                onPress={handleDebugApproval}
+                className="mt-2"
+              >
+                Debug Approval System
+              </Button>
             </div>
           </div>
         </CardBody>

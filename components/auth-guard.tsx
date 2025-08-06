@@ -22,10 +22,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
     const timeout = setTimeout(() => {
       if (loading) {
         console.warn('AuthGuard loading timeout - redirecting to auth');
+        console.warn('Timeout details - loading:', loading, 'user:', !!user, 'approved:', approved);
         setLoading(false);
         router.push('/auth');
       }
-    }, 5000); // Reduced to 5 second timeout
+    }, 15000); // Increased to 15 second timeout
 
     return () => clearTimeout(timeout);
   }, [loading, router]);
@@ -43,9 +44,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
         // Check if user is approved (simplified for speed)
         console.log('Checking user approval for:', user.email, 'ID:', user.id);
         
-        // Check user approval (using hardcoded values for now)
-        let isApproved = await isUserApproved(user.id);
-        console.log('User approval result:', isApproved);
+        // Check user approval with timeout
+        let isApproved = false;
+        try {
+          const approvalPromise = isUserApproved(user.id);
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Approval check timeout')), 5000);
+          });
+          
+          isApproved = await Promise.race([approvalPromise, timeoutPromise]) as boolean;
+          console.log('User approval result:', isApproved);
+        } catch (error) {
+          console.error('Approval check error:', error);
+          isApproved = false;
+        }
         
         if (!isApproved) {
           console.log('❌ User not approved, redirecting to auth');
@@ -101,8 +113,21 @@ export function AuthGuard({ children }: AuthGuardProps) {
         } else if (session?.user) {
           // Check if user is approved (with email cross-referencing for Google SSO)
           console.log('Auth state change - checking user approval for:', session.user.email, 'ID:', session.user.id);
-          let isApproved = await isUserApproved(session.user.id);
-          console.log('Auth state change - initial approval check result:', isApproved);
+          
+          // Check user approval with timeout
+          let isApproved = false;
+          try {
+            const approvalPromise = isUserApproved(session.user.id);
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Approval check timeout')), 5000);
+            });
+            
+            isApproved = await Promise.race([approvalPromise, timeoutPromise]) as boolean;
+            console.log('Auth state change - initial approval check result:', isApproved);
+          } catch (error) {
+            console.error('Auth state change - Approval check error:', error);
+            isApproved = false;
+          }
           
           // If not approved by user ID, try email cross-referencing for Google SSO
           if (!isApproved && session.user.app_metadata?.provider === 'google') {
