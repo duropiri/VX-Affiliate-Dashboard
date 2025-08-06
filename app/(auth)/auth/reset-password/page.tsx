@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Card,
@@ -13,7 +13,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { addToast } from "@heroui/toast";
 
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
@@ -274,5 +274,38 @@ export default function ResetPasswordPage() {
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-primary/10 to-white flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center justify-center pb-2">
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
+                <HeroImage
+                  src="https://storage.googleapis.com/msgsndr/6mf1vLiHQTtwiHYT2ZIP/media/6700d525ab8aa65e4371b897.png"
+                  alt="Virtual Xposure Logo"
+                  width={48}
+                  height={48}
+                />
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                Reset Password
+              </h1>
+            </div>
+          </CardHeader>
+          <CardBody className="pt-0">
+            <div className="text-center">
+              <p className="text-gray-600">Loading...</p>
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    }>
+      <ResetPasswordContent />
+    </Suspense>
   );
 } 
