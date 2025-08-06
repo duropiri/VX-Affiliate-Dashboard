@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { createUserProfile, createReferralCode, getUserProfile, isUserApproved, handlePostGoogleAuth, debugApprovedUsers } from '@/lib/auth';
-import { Spinner } from '@heroui/react';
+import { addToast, Spinner } from '@heroui/react';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -52,6 +52,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
           setUser(null);
           setLoading(false);
           router.push('/auth');
+          addToast({
+            title: "User not approved",
+            color: "danger",
+          });
           return;
         }
         
