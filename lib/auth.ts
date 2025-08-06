@@ -288,15 +288,15 @@ export const handlePostAuth = async (user: User) => {
   try {
     console.log('Handling post-auth for user:', user.email);
     console.log('User ID:', user.id);
-    console.log('User metadata:', user.user_metadata);
+    console.log('User provider:', user.app_metadata?.provider);
     
     // First check if user is approved by user ID
     let isApproved = await isUserApproved(user.id);
     console.log('Initial approval check result:', isApproved);
     
-    if (!isApproved) {
-      // Check if user is approved by email (cross-reference for OAuth)
-      console.log('User not approved by ID, checking by email:', user.email);
+    // Only do email cross-reference for OAuth users (Google, GitHub, etc.)
+    if (!isApproved && user.app_metadata?.provider && user.app_metadata.provider !== 'email') {
+      console.log('User not approved by ID, checking by email for OAuth user:', user.email);
       
       const { data: approvedUser, error: approvalError } = await supabase
         .from('approved_users')
@@ -339,12 +339,57 @@ export const handlePostAuth = async (user: User) => {
           isApproved = true;
         }
       }
+    } else if (!isApproved) {
+      console.log('User not approved and not OAuth - no email cross-reference needed');
     }
 
     console.log('handlePostAuth final result:', isApproved);
     return isApproved;
   } catch (error) {
     console.error('Error in post-auth handling:', error);
+    return false;
+  }
+};
+
+// Data refresh function to handle database updates
+export const refreshUserData = async (userId: string): Promise<boolean> => {
+  try {
+    console.log('🔄 Refreshing user data for:', userId);
+    
+    // Force refresh by clearing any potential cache and re-querying
+    const refreshQueries = await Promise.allSettled([
+      // Refresh user profile
+      optimizedQuery(async () => {
+        return supabase
+          .from('affiliate_profiles')
+          .select('*')
+          .eq('user_id', userId)
+          .single();
+      }, 5000),
+      
+      // Refresh referral code
+      optimizedQuery(async () => {
+        return supabase
+          .from('affiliate_referrers')
+          .select('*')
+          .eq('user_id', userId)
+          .single();
+      }, 5000),
+      
+      // Refresh dashboard KPIs
+      optimizedQuery(async () => {
+        return supabase
+          .from('dashboard_kpis')
+          .select('*')
+          .eq('user_id', userId)
+          .single();
+      }, 5000),
+    ]);
+    
+    console.log('✅ Data refresh completed:', refreshQueries.map(q => q.status));
+    return true;
+  } catch (error) {
+    console.error('❌ Error refreshing user data:', error);
     return false;
   }
 };
