@@ -288,15 +288,15 @@ export const handlePostAuth = async (user: User) => {
   try {
     console.log('Handling post-auth for user:', user.email);
     console.log('User ID:', user.id);
-    console.log('User provider:', user.app_metadata?.provider);
+    console.log('User metadata:', user.user_metadata);
     
     // First check if user is approved by user ID
     let isApproved = await isUserApproved(user.id);
     console.log('Initial approval check result:', isApproved);
     
-    // Only do email cross-reference for OAuth users (Google, GitHub, etc.)
-    if (!isApproved && user.app_metadata?.provider && user.app_metadata.provider !== 'email') {
-      console.log('User not approved by ID, checking by email for OAuth user:', user.email);
+    if (!isApproved) {
+      // Check if user is approved by email (cross-reference for OAuth)
+      console.log('User not approved by ID, checking by email:', user.email);
       
       const { data: approvedUser, error: approvalError } = await supabase
         .from('approved_users')
@@ -339,57 +339,12 @@ export const handlePostAuth = async (user: User) => {
           isApproved = true;
         }
       }
-    } else if (!isApproved) {
-      console.log('User not approved and not OAuth - no email cross-reference needed');
     }
 
     console.log('handlePostAuth final result:', isApproved);
     return isApproved;
   } catch (error) {
     console.error('Error in post-auth handling:', error);
-    return false;
-  }
-};
-
-// Data refresh function to handle database updates
-export const refreshUserData = async (userId: string): Promise<boolean> => {
-  try {
-    console.log('🔄 Refreshing user data for:', userId);
-    
-    // Force refresh by clearing any potential cache and re-querying
-    const refreshQueries = await Promise.allSettled([
-      // Refresh user profile
-      optimizedQuery(async () => {
-        return supabase
-          .from('affiliate_profiles')
-          .select('*')
-          .eq('user_id', userId)
-          .single();
-      }, 5000),
-      
-      // Refresh referral code
-      optimizedQuery(async () => {
-        return supabase
-          .from('affiliate_referrers')
-          .select('*')
-          .eq('user_id', userId)
-          .single();
-      }, 5000),
-      
-      // Refresh dashboard KPIs
-      optimizedQuery(async () => {
-        return supabase
-          .from('dashboard_kpis')
-          .select('*')
-          .eq('user_id', userId)
-          .single();
-      }, 5000),
-    ]);
-    
-    console.log('✅ Data refresh completed:', refreshQueries.map(q => q.status));
-    return true;
-  } catch (error) {
-    console.error('❌ Error refreshing user data:', error);
     return false;
   }
 };
@@ -530,28 +485,21 @@ export const createReferralCode = async (userId: string) => {
 };
 
 export const getReferralCode = async (userId: string): Promise<string | null> => {
-  try {
-    const queryResult = await optimizedQuery(async () => {
-      return supabase
-        .from('affiliate_referrers')
-        .select('code')
-        .eq('user_id', userId)
-        .single();
-    }, 8000); // 8 second timeout
-    
-    if (queryResult.error) {
-      // If no rows found, return null instead of throwing
-      if (queryResult.error.code === 'PGRST116') {
-        return null;
-      }
-      throw queryResult.error;
-    }
+  const { data, error } = await supabase
+    .from('affiliate_referrers')
+    .select('code')
+    .eq('user_id', userId)
+    .single();
 
-    return queryResult.data?.code || null;
-  } catch (error) {
-    console.error('Error getting referral code:', error);
-    return null;
+  if (error) {
+    // If no rows found, return null instead of throwing
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    throw error;
   }
+
+  return data?.code || null;
 };
 
 const generateReferralCode = (): string => {
@@ -1159,26 +1107,24 @@ export const calculateUserReportsTotals = async (): Promise<{
 
     console.log('🔄 Calculating totals from user_reports for:', user.id);
     
-    // Use optimized query for better production performance
-    const queryResult = await optimizedQuery(async () => {
-      return supabase
-        .from('dashboard_kpis')
-        .select('user_reports')
-        .eq('user_id', user.id)
-        .single();
-    }, 10000); // 10 second timeout
+    // Get the user_reports from dashboard_kpis
+    const { data, error } = await supabase
+      .from('dashboard_kpis')
+      .select('user_reports')
+      .eq('user_id', user.id)
+      .single();
     
-    if (queryResult.error) {
-      console.error('Error fetching user reports for totals:', queryResult.error);
+    if (error) {
+      console.error('Error fetching user reports for totals:', error);
       return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
     }
     
-    if (!queryResult.data || !queryResult.data.user_reports || !queryResult.data.user_reports.overview) {
+    if (!data || !data.user_reports || !data.user_reports.overview) {
       console.log('No user_reports data found, returning zeros');
       return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
     }
     
-    const overview = queryResult.data.user_reports.overview;
+    const overview = data.user_reports.overview;
     let totalClicks = 0;
     let totalReferrals = 0;
     let totalCustomers = 0;

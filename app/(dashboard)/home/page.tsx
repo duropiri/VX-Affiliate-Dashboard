@@ -3,14 +3,13 @@
 import { useEffect, useState } from "react";
 import { ReferralCard } from "@/components/referral-card";
 import { StatsBar } from "@/components/stats-bar";
-import { Card, CardBody, CardHeader, Link, Spinner, Button } from "@heroui/react";
-import { CheckCircle, Circle, RefreshCw } from "lucide-react";
-import { supabase, optimizedQuery } from "@/lib/supabase";
+import { Card, CardBody, CardHeader, Link, Spinner } from "@heroui/react";
+import { CheckCircle, Circle } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import {
   getUserProfile,
   getReferralCode,
   calculateUserReportsTotals,
-  refreshUserData,
 } from "@/lib/auth";
 
 export default function HomePage() {
@@ -22,97 +21,130 @@ export default function HomePage() {
     earnings: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   // Reset loading state on mount
   useEffect(() => {
     setLoading(true);
   }, []);
 
-  const loadData = async (forceRefresh = false) => {
-    try {
-      console.log("🔄 Loading dashboard data...", forceRefresh ? "(forced refresh)" : "");
-      setLoading(true);
-
-      console.log("🔍 Getting user from Supabase...");
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      console.log("👤 User:", user?.email, "ID:", user?.id);
-
-      if (!user) {
-        console.log("❌ No user found");
-        return;
-      }
-
-      console.log("✅ User found, loading data...");
-
-      // Force refresh data if requested
-      if (forceRefresh) {
-        console.log("🔄 Forcing data refresh...");
-        await refreshUserData(user.id);
-      }
-
-      // Load data in parallel with optimized queries
-      console.log("📊 Starting optimized data queries...");
-
-      // Use optimized queries for better production performance
-      const [referralCodeResult, kpiResult] = await Promise.allSettled([
-        optimizedQuery(async () => getReferralCode(user.id), 15000), // 15 second timeout
-        optimizedQuery(async () => calculateUserReportsTotals(), 15000), // 15 second timeout
-      ]);
-
-      console.log("📈 Query results:", { referralCodeResult, kpiResult });
-
-      // Handle referral code
-      if (referralCodeResult.status === "fulfilled") {
-        setReferralCode(referralCodeResult.value || "");
-        console.log("🎯 Referral code:", referralCodeResult.value);
-      } else {
-        console.error(
-          "❌ Error loading referral code:",
-          referralCodeResult.reason
-        );
-        // Set a default referral code if none exists
-        setReferralCode("VX-" + user.id.slice(0, 8).toUpperCase());
-      }
-
-      // Handle KPIs from user_reports totals
-      if (kpiResult.status === "fulfilled") {
-        setKpis(kpiResult.value);
-        console.log("📊 KPIs loaded from user_reports:", kpiResult.value);
-      } else {
-        console.error(
-          "❌ Error loading KPIs from user_reports:",
-          kpiResult.status === "rejected" ? kpiResult.reason : "No data"
-        );
-        // Set default KPIs if none exist
-        setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
-      }
-    } catch (error) {
-      console.error("💥 Error loading dashboard data:", error);
-      // Set default values on error
-      setReferralCode("VX-DEFAULT");
-      setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
-    } finally {
-      console.log("🏁 Setting loading to false");
-      setLoading(false);
-    }
-  };
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await loadData(true); // Force refresh
-    setRefreshing(false);
-  };
-
   useEffect(() => {
     console.log("🚀 HomePage useEffect triggered");
     let isMounted = true;
 
+    const loadData = async () => {
+      try {
+        console.log("🔄 Loading dashboard data...");
+        setLoading(true);
+
+        console.log("🔍 Getting user from Supabase...");
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        console.log("👤 User:", user?.email, "ID:", user?.id);
+
+        if (!isMounted) {
+          console.log("❌ Component unmounted, stopping");
+          return;
+        }
+
+        if (user) {
+          console.log("✅ User found, loading data...");
+
+          // Load data in parallel without timeout
+          console.log("📊 Starting data queries...");
+
+          // Test database connection first
+          console.log("🔍 Testing database connection...");
+
+          // Test 1: Check if tables exist
+          console.log("🔍 Test 1: Checking affiliate_referrers table...");
+          const { data: testData1, error: testError1 } = await supabase
+            .from("affiliate_referrers")
+            .select("count")
+            .limit(1);
+
+          console.log("🔍 affiliate_referrers test:", {
+            testData1,
+            testError1,
+          });
+
+          // Test 2: Check if user has any data
+          console.log("🔍 Test 2: Checking user referral data...");
+          const { data: testData2, error: testError2 } = await supabase
+            .from("affiliate_referrers")
+            .select("*")
+            .eq("user_id", user.id);
+
+          console.log("🔍 User referral data test:", { testData2, testError2 });
+
+          // Test 3: Check dashboard_kpis
+          console.log("🔍 Test 3: Checking user KPIs...");
+          const { data: testData3, error: testError3 } = await supabase
+            .from("dashboard_kpis")
+            .select("*")
+            .eq("user_id", user.id);
+
+          console.log("🔍 User KPIs test:", { testData3, testError3 });
+
+          console.log("🔍 Starting main data queries...");
+          const [referralCodeResult, kpiResult] = await Promise.allSettled([
+            getReferralCode(user.id),
+            calculateUserReportsTotals(),
+          ]);
+
+          if (!isMounted) {
+            console.log("❌ Component unmounted during queries, stopping");
+            return;
+          }
+
+          console.log("📈 Query results:", { referralCodeResult, kpiResult });
+
+          // Handle referral code
+          if (referralCodeResult.status === "fulfilled") {
+            setReferralCode(referralCodeResult.value || "");
+            console.log("🎯 Referral code:", referralCodeResult.value);
+          } else {
+            console.error(
+              "❌ Error loading referral code:",
+              referralCodeResult.reason
+            );
+            // Set a default referral code if none exists
+            setReferralCode("VX-" + user.id.slice(0, 8).toUpperCase());
+          }
+
+          // Handle KPIs from user_reports totals
+          if (kpiResult.status === "fulfilled") {
+            setKpis(kpiResult.value);
+            console.log("📊 KPIs loaded from user_reports:", kpiResult.value);
+          } else {
+            console.error(
+              "❌ Error loading KPIs from user_reports:",
+              kpiResult.status === "rejected" ? kpiResult.reason : "No data"
+            );
+            // Set default KPIs if none exist
+            setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
+          }
+        } else {
+          console.log("❌ No user found");
+        }
+      } catch (error) {
+        console.error("💥 Error loading dashboard data:", error);
+        if (isMounted) {
+          // Set default values on error
+          setReferralCode("VX-DEFAULT");
+          setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
+        }
+      } finally {
+        if (isMounted) {
+          console.log("🏁 Setting loading to false");
+          setLoading(false);
+        }
+      }
+    };
+
     console.log("🚀 Starting loadData function");
 
-    // Add a longer timeout for production
+    // Add a timeout to prevent infinite loading
     const timeoutId = setTimeout(() => {
       console.log("⏰ Loading timeout reached - forcing completion");
       if (isMounted) {
@@ -120,7 +152,7 @@ export default function HomePage() {
         setReferralCode("VX-TIMEOUT");
         setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
       }
-    }, 20000); // Increased to 20 second timeout for production
+    }, 10000); // 10 second timeout
 
     loadData().finally(() => {
       clearTimeout(timeoutId);
@@ -147,20 +179,6 @@ export default function HomePage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <Button
-          color="primary"
-          variant="flat"
-          size="sm"
-          onPress={handleRefresh}
-          isLoading={refreshing}
-          startContent={<RefreshCw size={16} />}
-        >
-          Refresh Data
-        </Button>
-      </div>
-      
       <ReferralCard referralCode={referralCode} />
       <StatsBar
         clicks={kpis.clicks}
