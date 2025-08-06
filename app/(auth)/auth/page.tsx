@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
+import { useRouter } from "next/navigation";
 import {
   Card,
   CardBody,
@@ -9,7 +10,6 @@ import {
   Input,
   Image as HeroImage,
   Link,
-  Spinner,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
 import {
@@ -30,6 +30,7 @@ import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
 
 function AuthPageContent() {
+  const router = useRouter();
   const [showEmailForm, setShowEmailForm] = useState(true);
   const [showResetForm, setShowResetForm] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -81,12 +82,18 @@ function AuthPageContent() {
 
     setLoading(true);
     try {
-      await signInWithEmail(email, password);
+      const result = await signInWithEmail(email, password);
+      
+      // If we get here, the user is approved and signed in
       addToast({
         title: "Success",
         description: "Signed in successfully",
         color: "success",
       });
+      
+      // Use router for proper navigation
+      router.push('/home');
+      
     } catch (error) {
       console.error("Sign in error:", error);
       addToast({
@@ -388,12 +395,12 @@ export default function AuthPage() {
   return (
     <Suspense fallback={
       <div className="min-h-screen flex items-center justify-center">
-        <Spinner
+        {/* <Spinner
           classNames={{ label: "text-foreground mt-4" }}
           variant="default"
           size="lg"
           color="primary"
-        />
+        /> */}
         {/* <p className="mt-4 text-gray-600">Loading...</p> */}
       </div>
     }>

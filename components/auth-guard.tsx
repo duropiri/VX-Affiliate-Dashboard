@@ -175,6 +175,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
             console.log(
               "✅ User is approved from auth state change, proceeding to dashboard"
             );
+            // Force a router push to ensure navigation
+            router.push("/home");
           } else {
             console.log(
               "❌ User not approved from auth state change, redirecting to auth"
@@ -227,6 +229,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
                 setApproved(true);
                 setLoading(false);
                 console.log("✅ User approved by email cross-reference");
+                router.push("/home");
                 return;
               }
             } catch (emailError) {
