@@ -70,7 +70,7 @@ export function DataTable({ data }: DataTableProps) {
                 No Referrals Found
               </h3>
               <p className="text-gray-600">
-                You haven't made any referrals yet. Start sharing your referral
+                You haven&apos;t made any referrals yet. Start sharing your referral
                 link to earn commissions!
               </p>
             </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import {
   Card,
   CardBody,
@@ -28,7 +28,7 @@ import { addToast } from "@heroui/toast";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
 
-export default function AuthPage() {
+function AuthPageContent() {
   const [showEmailForm, setShowEmailForm] = useState(true);
   const [showResetForm, setShowResetForm] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -380,5 +380,22 @@ export default function AuthPage() {
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-primary/10 to-white flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardBody className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+            <p className="mt-4 text-gray-600">Loading...</p>
+          </CardBody>
+        </Card>
+      </div>
+    }>
+      <AuthPageContent />
+    </Suspense>
   );
 }
