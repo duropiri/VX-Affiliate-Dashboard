@@ -4,8 +4,17 @@ import { useEffect, useState } from "react";
 import { Card, CardBody, CardHeader, Button } from "@heroui/react";
 import { supabase } from "@/lib/supabase";
 
+interface ConfigState {
+  url?: string;
+  key?: string;
+  environment?: string;
+  origin?: string;
+  supabaseConnection?: string;
+  error?: string;
+}
+
 export default function TestConfigPage() {
-  const [config, setConfig] = useState<any>(null);
+  const [config, setConfig] = useState<ConfigState | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,13 +33,13 @@ export default function TestConfigPage() {
 
         // Test Supabase connection
         const { data, error } = await supabase.auth.getSession();
-        setConfig(prev => ({
+        setConfig((prev: ConfigState | null) => ({
           ...prev,
           supabaseConnection: error ? "❌ Failed" : "✅ Connected",
           error: error?.message,
         }));
       } catch (error) {
-        setConfig(prev => ({
+        setConfig((prev: ConfigState | null) => ({
           ...prev,
           supabaseConnection: "❌ Error",
           error: error instanceof Error ? error.message : "Unknown error",
