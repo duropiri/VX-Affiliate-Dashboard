@@ -5,7 +5,7 @@ import { ReferralCard } from "@/components/referral-card";
 import { StatsBar } from "@/components/stats-bar";
 import { Card, CardBody, CardHeader, Link, Spinner } from "@heroui/react";
 import { CheckCircle, Circle } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { supabase, optimizedQuery } from "@/lib/supabase";
 import {
   getUserProfile,
   getReferralCode,
@@ -50,46 +50,13 @@ export default function HomePage() {
         if (user) {
           console.log("✅ User found, loading data...");
 
-          // Load data in parallel without timeout
-          console.log("📊 Starting data queries...");
+          // Load data in parallel with optimized queries
+          console.log("📊 Starting optimized data queries...");
 
-          // Test database connection first
-          console.log("🔍 Testing database connection...");
-
-          // Test 1: Check if tables exist
-          console.log("🔍 Test 1: Checking affiliate_referrers table...");
-          const { data: testData1, error: testError1 } = await supabase
-            .from("affiliate_referrers")
-            .select("count")
-            .limit(1);
-
-          console.log("🔍 affiliate_referrers test:", {
-            testData1,
-            testError1,
-          });
-
-          // Test 2: Check if user has any data
-          console.log("🔍 Test 2: Checking user referral data...");
-          const { data: testData2, error: testError2 } = await supabase
-            .from("affiliate_referrers")
-            .select("*")
-            .eq("user_id", user.id);
-
-          console.log("🔍 User referral data test:", { testData2, testError2 });
-
-          // Test 3: Check dashboard_kpis
-          console.log("🔍 Test 3: Checking user KPIs...");
-          const { data: testData3, error: testError3 } = await supabase
-            .from("dashboard_kpis")
-            .select("*")
-            .eq("user_id", user.id);
-
-          console.log("🔍 User KPIs test:", { testData3, testError3 });
-
-          console.log("🔍 Starting main data queries...");
+          // Use optimized queries for better production performance
           const [referralCodeResult, kpiResult] = await Promise.allSettled([
-            getReferralCode(user.id),
-            calculateUserReportsTotals(),
+            optimizedQuery(async () => getReferralCode(user.id), 15000), // 15 second timeout
+            optimizedQuery(async () => calculateUserReportsTotals(), 15000), // 15 second timeout
           ]);
 
           if (!isMounted) {
@@ -144,7 +111,7 @@ export default function HomePage() {
 
     console.log("🚀 Starting loadData function");
 
-    // Add a timeout to prevent infinite loading
+    // Add a longer timeout for production
     const timeoutId = setTimeout(() => {
       console.log("⏰ Loading timeout reached - forcing completion");
       if (isMounted) {
@@ -152,7 +119,7 @@ export default function HomePage() {
         setReferralCode("VX-TIMEOUT");
         setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
       }
-    }, 10000); // 10 second timeout
+    }, 20000); // Increased to 20 second timeout for production
 
     loadData().finally(() => {
       clearTimeout(timeoutId);

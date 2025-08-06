@@ -485,21 +485,28 @@ export const createReferralCode = async (userId: string) => {
 };
 
 export const getReferralCode = async (userId: string): Promise<string | null> => {
-  const { data, error } = await supabase
-    .from('affiliate_referrers')
-    .select('code')
-    .eq('user_id', userId)
-    .single();
-
-  if (error) {
-    // If no rows found, return null instead of throwing
-    if (error.code === 'PGRST116') {
-      return null;
+  try {
+    const queryResult = await optimizedQuery(async () => {
+      return supabase
+        .from('affiliate_referrers')
+        .select('code')
+        .eq('user_id', userId)
+        .single();
+    }, 8000); // 8 second timeout
+    
+    if (queryResult.error) {
+      // If no rows found, return null instead of throwing
+      if (queryResult.error.code === 'PGRST116') {
+        return null;
+      }
+      throw queryResult.error;
     }
-    throw error;
-  }
 
-  return data?.code || null;
+    return queryResult.data?.code || null;
+  } catch (error) {
+    console.error('Error getting referral code:', error);
+    return null;
+  }
 };
 
 const generateReferralCode = (): string => {
@@ -1107,24 +1114,26 @@ export const calculateUserReportsTotals = async (): Promise<{
 
     console.log('🔄 Calculating totals from user_reports for:', user.id);
     
-    // Get the user_reports from dashboard_kpis
-    const { data, error } = await supabase
-      .from('dashboard_kpis')
-      .select('user_reports')
-      .eq('user_id', user.id)
-      .single();
+    // Use optimized query for better production performance
+    const queryResult = await optimizedQuery(async () => {
+      return supabase
+        .from('dashboard_kpis')
+        .select('user_reports')
+        .eq('user_id', user.id)
+        .single();
+    }, 10000); // 10 second timeout
     
-    if (error) {
-      console.error('Error fetching user reports for totals:', error);
+    if (queryResult.error) {
+      console.error('Error fetching user reports for totals:', queryResult.error);
       return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
     }
     
-    if (!data || !data.user_reports || !data.user_reports.overview) {
+    if (!queryResult.data || !queryResult.data.user_reports || !queryResult.data.user_reports.overview) {
       console.log('No user_reports data found, returning zeros');
       return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
     }
     
-    const overview = data.user_reports.overview;
+    const overview = queryResult.data.user_reports.overview;
     let totalClicks = 0;
     let totalReferrals = 0;
     let totalCustomers = 0;
