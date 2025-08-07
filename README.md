@@ -51,3 +51,4 @@ After modifying the `.npmrc` file, you need to run `pnpm install` again to ensur
 ## License
 
 Licensed under the [MIT license](https://github.com/heroui-inc/next-app-template/blob/main/LICENSE).
+# Force Vercel redeploy - Wed Aug  6 21:04:22 MDT 2025
