@@ -13,17 +13,10 @@ import {
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
 import {
-  signInWithGoogle,
   signInWithEmail,
   resetPassword,
-  debugApprovedUsers,
-  isUserApproved,
-  testDatabaseConnection,
-  testSupabaseConnection,
-  checkSupabaseConfig,
-  testSimpleTableQuery,
-  testSimpleQuery,
-  testExactQuery,
+  getUserCredentials,
+  clearUserCredentials,
 } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
 import { supabase } from "@/lib/supabase";
@@ -40,6 +33,16 @@ function AuthPageContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
 
+  // Load stored credentials on mount
+  useEffect(() => {
+    const storedCredentials = getUserCredentials();
+    if (storedCredentials) {
+      setEmail(storedCredentials.email);
+      setPassword(storedCredentials.password);
+      console.log("Loaded stored credentials for:", storedCredentials.email);
+    }
+  }, []);
+
   useEffect(() => {
     if (error === "not-approved") {
       addToast({
@@ -50,25 +53,6 @@ function AuthPageContent() {
       });
     }
   }, [error]);
-
-  const handleGoogleSignIn = async () => {
-    setLoading(true);
-    try {
-      await signInWithGoogle();
-      addToast({
-        title: "Signing in with Google...",
-        color: "default",
-      });
-    } catch (error: any) {
-      console.error("Google sign-in error:", error);
-      addToast({
-        title: error.message || "Failed to sign in with Google",
-        color: "danger",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleEmailSignIn = async () => {
     if (!email || !password) {
@@ -96,8 +80,12 @@ function AuthPageContent() {
       
     } catch (error) {
       console.error("Sign in error:", error);
+      
+      // Clear stored credentials on sign-in failure
+      clearUserCredentials();
+      
       addToast({
-        title: "Error",
+        title: "Sign In Failed",
         description: error instanceof Error ? error.message : "Sign in failed",
         color: "danger",
       });
@@ -146,98 +134,17 @@ function AuthPageContent() {
     setShowResetForm(true);
     setShowEmailForm(false);
     setResetEmail(email); // Pre-fill with current email if available
-    // addToast({
-    //   title: "Opening password reset form...",
-    //   color: "primary",
-    // });
   };
 
-  const handleDebugApproval = async () => {
-    try {
-      console.log("Debugging approval system...");
-
-      // Test 0: Check Supabase configuration
-      const config = checkSupabaseConfig();
-      console.log("Supabase config check:", config);
-      addToast({
-        title: `Config: ${config.urlExists && config.anonKeyExists ? "OK" : "FAILED"}`,
-        description: `URL: ${config.urlExists}, Key: ${config.anonKeyExists}`,
-        color: config.urlExists && config.anonKeyExists ? "success" : "danger",
-      });
-
-      // Test 1: Basic Supabase connection
-      const connectionTest = await testSupabaseConnection();
-      console.log("Supabase connection test:", connectionTest);
-      addToast({
-        title: `Supabase connection: ${connectionTest.success ? "OK" : "FAILED"}`,
-        description: connectionTest.error,
-        color: connectionTest.success ? "success" : "danger",
-      });
-
-      // Test 2: Simple query test
-      const simpleQueryTest = await testSimpleQuery();
-      console.log("Simple query test:", simpleQueryTest);
-      addToast({
-        title: `Simple query: ${simpleQueryTest ? "OK" : "FAILED"}`,
-        color: simpleQueryTest ? "success" : "danger",
-      });
-
-      // Test 3: Simple table query
-      const simpleTableTest = await testSimpleTableQuery();
-      console.log("Simple table test:", simpleTableTest);
-      addToast({
-        title: `Simple table query: ${simpleTableTest.success ? "OK" : "FAILED"}`,
-        description: simpleTableTest.error,
-        color: simpleTableTest.success ? "success" : "danger",
-      });
-
-      // Test 4: Database health check
-      const dbHealthy = await testDatabaseConnection();
-      console.log("Database healthy:", dbHealthy);
-      addToast({
-        title: `Database connection: ${dbHealthy ? "OK" : "FAILED"}`,
-        color: dbHealthy ? "success" : "danger",
-      });
-
-      // Test 3: Check approved users table
-      const approvedUsers = await debugApprovedUsers();
-      console.log("Approved users:", approvedUsers);
-
-      // Test 4: Check if current user is approved
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const isApproved = await isUserApproved(user.id);
-        console.log("Current user approved:", isApproved);
-        addToast({
-          title: `Current user approved: ${isApproved}`,
-          color: isApproved ? "success" : "danger",
-        });
-      } else {
-        addToast({
-          title: "No current user found",
-          color: "warning",
-        });
-      }
-
-      // Test exact query that's failing
-      const exactQueryResult = await testExactQuery(
-        "996c5b3a-3bd6-47f1-a5b5-073bcdda2f85"
-      );
-      addToast({
-        title: `Exact query test: ${exactQueryResult ? "SUCCESS" : "FAILED"}`,
-        color: exactQueryResult ? "success" : "danger",
-      });
-      console.log("Exact query test:", exactQueryResult);
-    } catch (error) {
-      console.error("Debug error:", error);
-      addToast({
-        title: "Debug failed",
-        description: error instanceof Error ? error.message : "Unknown error",
-        color: "danger",
-      });
-    }
+  const handleClearCredentials = () => {
+    clearUserCredentials();
+    setEmail("");
+    setPassword("");
+    addToast({
+      title: "Credentials Cleared",
+      description: "Stored credentials have been cleared.",
+      color: "success",
+    });
   };
 
   // Debug state values
@@ -265,23 +172,6 @@ function AuthPageContent() {
 
         <CardBody className="pt-0">
           <div className="space-y-4">
-            <Button
-              color="default"
-              variant="flat"
-              className="w-full"
-              onPress={handleGoogleSignIn}
-              isLoading={loading && !showEmailForm && !showResetForm}
-              startContent={<FcGoogle size={20} />}
-            >
-              Continue with Google
-            </Button>
-
-            <div className="relative my-4">
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 text-primary">or</span>
-              </div>
-            </div>
-
             {showEmailForm ? (
               <div className="space-y-4">
                 <Input
@@ -317,6 +207,17 @@ function AuthPageContent() {
                   >
                     Forgot Password?
                   </Button>
+                  {getUserCredentials() && (
+                    <Button
+                      type="button"
+                      color="default"
+                      variant="light"
+                      className="flex-1"
+                      onPress={handleClearCredentials}
+                    >
+                      Clear Saved
+                    </Button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -362,7 +263,7 @@ function AuthPageContent() {
                 Only approved affiliates can access the dashboard
               </p>
               <p className="text-xs text-gray-400">
-                Google SSO will link to existing approved accounts by email
+                Your credentials are securely stored for convenience
               </p>
               <Link
                 href="https://api.leadconnectorhq.com/widget/form/1R5iyXWWm6IgKBpqZffb"
@@ -374,15 +275,6 @@ function AuthPageContent() {
               >
                 Not an affiliate? Apply here →
               </Link>
-
-              {/* <Button
-                size="sm"
-                variant="light"
-                onPress={handleDebugApproval}
-                className="mt-2"
-              >
-                Debug Approval System
-              </Button> */}
             </div>
           </div>
         </CardBody>

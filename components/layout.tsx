@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
+import { addToast } from "@heroui/toast";
+
 // Simple logo component
 const Logo = () => (
   <svg
@@ -77,10 +79,26 @@ export function Layout({ children }: LayoutProps) {
 
   const handleSignOut = async () => {
     try {
+      console.log('🔄 Signing out from layout...');
       await signOut();
+      
+      addToast({
+        title: "Signed Out",
+        description: "You have been successfully signed out.",
+        color: "success",
+      });
+      
       router.push("/auth");
     } catch (error) {
       console.error("Error signing out:", error);
+      addToast({
+        title: "Sign Out Error",
+        description: "There was an error signing out. Please try again.",
+        color: "danger",
+      });
+      
+      // Force redirect even if sign out fails
+      router.push("/auth");
     }
   };
 

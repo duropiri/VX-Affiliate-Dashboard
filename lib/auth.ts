@@ -46,6 +46,51 @@ export const signInWithGithub = async () => {
   }
 };
 
+// Enhanced user credential storage
+export const storeUserCredentials = (email: string, password: string) => {
+  try {
+    if (typeof window !== 'undefined') {
+      const credentials = { email, password, timestamp: Date.now() };
+      localStorage.setItem('vx_user_credentials', JSON.stringify(credentials));
+    }
+  } catch (error) {
+    console.error('Error storing user credentials:', error);
+  }
+};
+
+export const getUserCredentials = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('vx_user_credentials');
+      if (stored) {
+        const credentials = JSON.parse(stored);
+        // Check if credentials are less than 24 hours old
+        if (Date.now() - credentials.timestamp < 24 * 60 * 60 * 1000) {
+          return credentials;
+        } else {
+          // Remove expired credentials
+          localStorage.removeItem('vx_user_credentials');
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Error retrieving user credentials:', error);
+    return null;
+  }
+};
+
+export const clearUserCredentials = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('vx_user_credentials');
+    }
+  } catch (error) {
+    console.error('Error clearing user credentials:', error);
+  }
+};
+
+// Enhanced sign in with email that stores credentials
 export const signInWithEmail = async (email: string, password: string) => {
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
@@ -56,10 +101,14 @@ export const signInWithEmail = async (email: string, password: string) => {
     throw error;
   }
 
-  // Check approval status
+  // Store credentials for future use
+  storeUserCredentials(email, password);
+
+  // Check approval status with enhanced error handling
   const approved = await handlePostAuth(data.user);
   if (!approved) {
     await supabase.auth.signOut();
+    clearUserCredentials();
     throw new Error('Account not approved');
   }
 
@@ -117,8 +166,24 @@ export const resetPassword = async (email: string) => {
 };
 
 export const signOut = async () => {
-  const { error } = await supabase.auth.signOut();
-  if (error) {
+  try {
+    console.log('🔄 Signing out user...');
+    
+    // Clear stored credentials first
+    clearUserCredentials();
+    
+    // Sign out from Supabase
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error('Error signing out from Supabase:', error);
+      throw error;
+    }
+    
+    console.log('✅ User signed out successfully');
+  } catch (error) {
+    console.error('Error in signOut:', error);
+    // Even if Supabase sign out fails, clear credentials
+    clearUserCredentials();
     throw error;
   }
 };
@@ -164,10 +229,10 @@ const waitForSupabaseReady = async (maxWait = 5000): Promise<boolean> => {
   return false;
 };
 
-// Check if user is approved to access the affiliate portal
+// Enhanced isUserApproved with better error handling and longer timeouts
 export const isUserApproved = async (userId: string): Promise<boolean> => {
   const maxRetries = 3;
-  const baseDelay = 1000; // Increased to 1 second base delay
+  const baseDelay = 2000; // Increased to 2 seconds base delay
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -179,7 +244,7 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
-      // Use optimized query helper for production
+      // Use optimized query helper for production with longer timeout
       const queryResult = await optimizedQuery(async () => {
         return supabase
           .from('approved_users')
@@ -187,7 +252,7 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
           .eq('user_id', userId)
           .eq('status', 'active')
           .limit(1);
-      }, 10000); // 10 second timeout
+      }, 20000); // 20 second timeout for better reliability
       
       console.log('isUserApproved query result:', queryResult);
 
@@ -204,7 +269,7 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
             await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
-          return false;
+          throw new Error(`Failed to check user approval after ${maxRetries} attempts`);
         }
       }
 
@@ -213,8 +278,6 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
       return result;
     } catch (error) {
       console.error(`Error checking user approval (attempt ${attempt}):`, error);
-      console.error('Error type:', typeof error);
-      console.error('Error message:', error instanceof Error ? error.message : 'Unknown error');
       
       if (attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt - 1);
@@ -222,11 +285,11 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
-      return false;
+      throw error; // Don't return false, throw the error
     }
   }
   
-  return false;
+  throw new Error(`Failed to check user approval after ${maxRetries} attempts`);
 };
 
 // Check if an email is approved (for cross-referencing)
@@ -432,21 +495,45 @@ export const createUserProfile = async (user: User) => {
 };
 
 export const getUserProfile = async (userId: string): Promise<UserProfile | null> => {
-  const { data, error } = await supabase
-    .from('affiliate_profiles')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
+  let retries = 3;
+  
+  while (retries > 0) {
+    try {
+      const { data, error } = await supabase
+        .from('affiliate_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
 
-  if (error) {
-    // If no rows found, return null instead of throwing
-    if (error.code === 'PGRST116') {
-      return null;
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No profile found - this is a valid state
+          console.log('No user profile found for user:', userId);
+          return null;
+        } else {
+          console.error(`Retry ${4 - retries}/3 - Error fetching user profile:`, error);
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      return data;
+    } catch (err) {
+      console.error(`Retry ${4 - retries}/3 - Exception fetching user profile:`, err);
+      retries--;
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        continue;
+      }
+      throw err;
     }
-    throw error;
   }
-
-  return data;
+  
+  throw new Error('Failed to fetch user profile after retries');
 };
 
 export const updateUserProfile = async (userId: string, updates: Partial<UserProfile>) => {
@@ -485,21 +572,45 @@ export const createReferralCode = async (userId: string) => {
 };
 
 export const getReferralCode = async (userId: string): Promise<string | null> => {
-  const { data, error } = await supabase
-    .from('affiliate_referrers')
-    .select('code')
-    .eq('user_id', userId)
-    .single();
+  let retries = 3;
+  
+  while (retries > 0) {
+    try {
+      const { data, error } = await supabase
+        .from('affiliate_referrers')
+        .select('code')
+        .eq('user_id', userId)
+        .single();
 
-  if (error) {
-    // If no rows found, return null instead of throwing
-    if (error.code === 'PGRST116') {
-      return null;
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No referral code found - this is a valid state
+          console.log('No referral code found for user:', userId);
+          return null;
+        } else {
+          console.error(`Retry ${4 - retries}/3 - Error fetching referral code:`, error);
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      return data?.code || null;
+    } catch (err) {
+      console.error(`Retry ${4 - retries}/3 - Exception fetching referral code:`, err);
+      retries--;
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        continue;
+      }
+      throw err;
     }
-    throw error;
   }
-
-  return data?.code || null;
+  
+  throw new Error('Failed to fetch referral code after retries');
 };
 
 const generateReferralCode = (): string => {
@@ -650,6 +761,7 @@ export interface UserReports {
   };
 }
 
+// Enhanced user reports retrieval without fallback data
 export const getUserReports = async (timeframe: string = "Last 30 Days"): Promise<UserReports | null> => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -660,31 +772,33 @@ export const getUserReports = async (timeframe: string = "Last 30 Days"): Promis
 
     console.log('🔄 Fetching user reports for:', user.id);
     
-    // Get the user_reports from dashboard_kpis
-    const { data, error } = await supabase
-      .from('dashboard_kpis')
-      .select('user_reports')
-      .eq('user_id', user.id)
-      .single();
+    // Get the user_reports from dashboard_kpis with optimized query helper
+    const queryResult = await optimizedQuery(async () => {
+      return supabase
+        .from('dashboard_kpis')
+        .select('user_reports')
+        .eq('user_id', user.id)
+        .single();
+    }, 20000); // 20 second timeout for better reliability
     
-    if (error) {
-      console.error('Error fetching user reports:', error);
-      return getDefaultUserReports();
+    if (queryResult.error) {
+      console.error('Error fetching user reports:', queryResult.error);
+      throw new Error('Failed to fetch user reports from database');
     }
     
-    if (data && data.user_reports) {
-      console.log('✅ User reports loaded:', data.user_reports);
+    if (queryResult.data && queryResult.data.user_reports) {
+      console.log('✅ User reports loaded:', queryResult.data.user_reports);
       
       // Transform the new structure to the expected format
-      const transformedReports = transformUserReports(data.user_reports, timeframe);
+      const transformedReports = transformUserReports(queryResult.data.user_reports, timeframe);
       return transformedReports;
     } else {
-      console.log('⚠️ No user reports found, using default data');
-      return getDefaultUserReports();
+      console.log('⚠️ No user reports found in database');
+      throw new Error('No user reports found in database');
     }
   } catch (error) {
     console.error('Error fetching user reports:', error);
-    return getDefaultUserReports();
+    throw error; // Don't return fallback data, throw the error
   }
 };
 
@@ -1091,7 +1205,7 @@ export const aggregateDataByMonth = (dailyData: DailyData[]): DailyData[] => {
   );
 };
 
-// Calculate totals from user_reports data
+// Enhanced calculate totals without fallback
 export const calculateUserReportsTotals = async (): Promise<{
   clicks: number;
   referrals: number;
@@ -1102,29 +1216,31 @@ export const calculateUserReportsTotals = async (): Promise<{
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       console.error('No authenticated user found');
-      return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
+      throw new Error('No authenticated user found');
     }
 
     console.log('🔄 Calculating totals from user_reports for:', user.id);
     
-    // Get the user_reports from dashboard_kpis
-    const { data, error } = await supabase
-      .from('dashboard_kpis')
-      .select('user_reports')
-      .eq('user_id', user.id)
-      .single();
+    // Get the user_reports from dashboard_kpis with optimized query helper
+    const queryResult = await optimizedQuery(async () => {
+      return supabase
+        .from('dashboard_kpis')
+        .select('user_reports')
+        .eq('user_id', user.id)
+        .single();
+    }, 20000); // 20 second timeout for better reliability
     
-    if (error) {
-      console.error('Error fetching user reports for totals:', error);
-      return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
+    if (queryResult.error) {
+      console.error('Error fetching user reports for totals:', queryResult.error);
+      throw new Error('Failed to fetch user reports from database');
     }
     
-    if (!data || !data.user_reports || !data.user_reports.overview) {
-      console.log('No user_reports data found, returning zeros');
-      return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
+    if (!queryResult.data || !queryResult.data.user_reports || !queryResult.data.user_reports.overview) {
+      console.log('No user_reports data found in database');
+      throw new Error('No user reports data found in database');
     }
     
-    const overview = data.user_reports.overview;
+    const overview = queryResult.data.user_reports.overview;
     let totalClicks = 0;
     let totalReferrals = 0;
     let totalCustomers = 0;
@@ -1153,7 +1269,7 @@ export const calculateUserReportsTotals = async (): Promise<{
     };
   } catch (error) {
     console.error('Error calculating user reports totals:', error);
-    return { clicks: 0, referrals: 0, customers: 0, earnings: 0 };
+    throw error; // Don't return fallback data, throw the error
   }
 };
 

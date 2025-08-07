@@ -27,6 +27,8 @@ import {
   Users,
   ChevronDownIcon,
   DownloadIcon,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import {
   getUserReports,
@@ -46,6 +48,7 @@ import {
   Legend,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
+import { addToast } from "@heroui/toast";
 
 // Register Chart.js components
 ChartJS.register(
@@ -65,6 +68,7 @@ export default function ReportsPage() {
   const [selectedTimeframe, setSelectedTimeframe] = useState("Last 30 Days");
   const [filteredData, setFilteredData] = useState<DailyData[]>([]);
   const [selectedTab, setSelectedTab] = useState("overview");
+  const [retrying, setRetrying] = useState(false);
 
   // Function to download CSV
   const downloadCSV = () => {
@@ -133,30 +137,44 @@ export default function ReportsPage() {
   };
 
   // Load reports from database
-  useEffect(() => {
-    const loadReports = async () => {
-      try {
-        console.log("🔄 Loading reports from database...");
-        const reportsData = await getUserReports(selectedTimeframe);
+  const loadReports = async () => {
+    try {
+      console.log("🔄 Loading reports from database...");
+      setLoading(true);
+      setError(null);
+      
+      const reportsData = await getUserReports(selectedTimeframe);
 
-        if (reportsData) {
-          console.log("✅ Reports loaded:", reportsData);
-          setReports(reportsData);
-          setFilteredData(reportsData.dailyData || []);
-        } else {
-          console.log("⚠️ No reports found or error occurred");
-          setError("Failed to load reports");
-        }
-      } catch (err) {
-        console.error("❌ Error loading reports:", err);
-        setError("Failed to load reports");
-      } finally {
-        setLoading(false);
+      if (reportsData) {
+        console.log("✅ Reports loaded:", reportsData);
+        setReports(reportsData);
+        setFilteredData(reportsData.dailyData || []);
+      } else {
+        throw new Error("No reports data returned from database");
       }
-    };
+    } catch (err) {
+      console.error("❌ Error loading reports:", err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to load reports";
+      setError(errorMessage);
+      addToast({
+        title: "Error Loading Reports",
+        description: errorMessage,
+        color: "danger",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadReports();
   }, [selectedTimeframe]);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    await loadReports();
+    setRetrying(false);
+  };
 
   // Show loading state
   if (loading) {
@@ -176,12 +194,21 @@ export default function ReportsPage() {
     return (
       <div className="space-y-6">
         <div className="text-center py-12">
-          <div className="text-gray-500">
-            <LineChart size={48} className="mx-auto mb-4 text-gray-300" />
+          <div className="text-gray-500 mb-6">
+            <AlertCircle size={48} className="mx-auto mb-4 text-red-500" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Error Loading Reports
             </h3>
-            <p className="text-gray-600">{error || "No reports available"}</p>
+            <p className="text-gray-600 mb-4">{error || "No reports available"}</p>
+            <Button
+              color="primary"
+              variant="flat"
+              startContent={<RefreshCw size={16} />}
+              onPress={handleRetry}
+              isLoading={retrying}
+            >
+              Retry
+            </Button>
           </div>
         </div>
       </div>

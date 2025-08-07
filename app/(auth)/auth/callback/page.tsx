@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { handlePostAuth } from "@/lib/auth";
+import { handlePostAuth, signOut } from "@/lib/auth";
 import { Spinner } from "@heroui/react";
 
 export default function Callback() {
@@ -48,7 +48,7 @@ export default function Callback() {
 
         if (!approved) {
           console.log("User not approved, signing out");
-          await supabase.auth.signOut();
+          await signOut();
           setStatus("error");
           setError("User not approved");
           // Redirect to auth page with error

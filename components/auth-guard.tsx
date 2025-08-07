@@ -10,6 +10,8 @@ import {
   getUserProfile,
   isUserApproved,
   handlePostAuth,
+  getUserCredentials,
+  clearUserCredentials,
 } from "@/lib/auth";
 import { addToast, Spinner } from "@heroui/react";
 
@@ -39,7 +41,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         setLoading(false);
         router.push("/auth");
       }
-    }, 30000); // Increased to 30 second timeout for production
+    }, 30000); // 30 second timeout for production
 
     return () => clearTimeout(timeout);
   }, [loading, router]);
@@ -56,10 +58,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
 
-        // Check if user is approved (simplified for speed)
+        // Check if user is approved with enhanced error handling
         console.log("Checking user approval for:", user.email, "ID:", user.id);
 
-        // Check user approval with increased timeout for production
         let isApproved = false;
         try {
           const approvalPromise = isUserApproved(user.id);
@@ -67,7 +68,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
             setTimeout(
               () => reject(new Error("Approval check timeout")),
               15000
-            ); // Increased to 15 seconds
+            ); // 15 seconds
           });
 
           isApproved = (await Promise.race([
@@ -77,9 +78,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
           console.log("User approval result:", isApproved);
         } catch (error) {
           console.error("Approval check error:", error);
-          // Don't immediately redirect on timeout, try a simpler check
+          
+          // Try a simpler query as fallback
           try {
-            // Try a simpler query as fallback
             const { data, error } = await supabase
               .from("approved_users")
               .select("user_id")
@@ -99,9 +100,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
           console.log("❌ User not approved, redirecting to auth");
           setUser(null);
           setLoading(false);
+          clearUserCredentials(); // Clear stored credentials
           router.push("/auth");
           addToast({
-            title: "User not approved",
+            title: "Access Denied",
+            description: "Your account is not approved. Please contact an administrator.",
             color: "danger",
           });
           return;
@@ -134,6 +137,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         }, 1000); // Delay profile creation to not block rendering
       } catch (error) {
         console.error("Error checking user:", error);
+        clearUserCredentials(); // Clear stored credentials on error
         router.push("/auth");
       }
     };
@@ -183,7 +187,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
             );
             setUser(null);
             setLoading(false);
+            clearUserCredentials(); // Clear stored credentials
             router.push("/auth");
+            addToast({
+              title: "Access Denied",
+              description: "Your account is not approved. Please contact an administrator.",
+              color: "danger",
+            });
           }
         } catch (error) {
           console.error("Auth state change - Approval check error:", error);
@@ -245,13 +255,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
           );
           setUser(null);
           setLoading(false);
+          clearUserCredentials(); // Clear stored credentials
           router.push("/auth");
+          addToast({
+            title: "Access Denied",
+            description: "Your account is not approved. Please contact an administrator.",
+            color: "danger",
+          });
         }
       } else if (event === "SIGNED_OUT") {
         console.log("User signed out");
         setUser(null);
         setApproved(false);
         setLoading(false);
+        clearUserCredentials(); // Clear stored credentials
         router.push("/auth");
       }
     });
@@ -278,7 +295,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
           size="lg"
           color="primary"
         />
-        {/* <p className="mt-4 text-gray-600">Loading...</p> */}
       </div>
     );
   }

@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import { ReferralCard } from "@/components/referral-card";
 import { StatsBar } from "@/components/stats-bar";
-import { Card, CardBody, CardHeader, Link, Spinner } from "@heroui/react";
-import { CheckCircle, Circle } from "lucide-react";
+import { Card, CardBody, CardHeader, Link, Spinner, Button } from "@heroui/react";
+import { CheckCircle, Circle, AlertCircle, RefreshCw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   getUserProfile,
   getReferralCode,
   calculateUserReportsTotals,
 } from "@/lib/auth";
+import { addToast } from "@heroui/toast";
 
 export default function HomePage() {
   const [referralCode, setReferralCode] = useState<string>("");
@@ -21,149 +22,91 @@ export default function HomePage() {
     earnings: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   // Reset loading state on mount
   useEffect(() => {
     setLoading(true);
+    setError(null);
   }, []);
+
+  const loadData = async () => {
+    try {
+      console.log("🔄 Loading dashboard data...");
+      setLoading(true);
+      setError(null);
+
+      console.log("🔍 Getting user from Supabase...");
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      console.log("👤 User:", user?.email, "ID:", user?.id);
+
+      if (!user) {
+        throw new Error("No authenticated user found");
+      }
+
+      console.log("✅ User found, loading data...");
+
+      // Load data in parallel
+      console.log("📊 Starting data queries...");
+
+      const [referralCodeResult, kpiResult] = await Promise.allSettled([
+        getReferralCode(user.id),
+        calculateUserReportsTotals(),
+      ]);
+
+      console.log("📈 Query results:", { referralCodeResult, kpiResult });
+
+      // Handle referral code
+      if (referralCodeResult.status === "fulfilled") {
+        const code = referralCodeResult.value;
+        if (code) {
+          setReferralCode(code);
+          console.log("🎯 Referral code:", code);
+        } else {
+          // No referral code found - this is a valid state
+          setReferralCode("");
+          console.log("No referral code found for user");
+        }
+      } else {
+        console.error("❌ Error loading referral code:", referralCodeResult.reason);
+        throw new Error(`Failed to load referral code: ${referralCodeResult.reason}`);
+      }
+
+      // Handle KPIs from user_reports totals
+      if (kpiResult.status === "fulfilled") {
+        setKpis(kpiResult.value);
+        console.log("📊 KPIs loaded from user_reports:", kpiResult.value);
+      } else {
+        console.error("❌ Error loading KPIs from user_reports:", kpiResult.reason);
+        throw new Error(`Failed to load user reports: ${kpiResult.reason}`);
+      }
+    } catch (error) {
+      console.error("💥 Error loading dashboard data:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      setError(errorMessage);
+      addToast({
+        title: "Error Loading Data",
+        description: errorMessage,
+        color: "danger",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    console.log("🚀 HomePage useEffect triggered");
-    let isMounted = true;
-
-    const loadData = async () => {
-      try {
-        console.log("🔄 Loading dashboard data...");
-        setLoading(true);
-
-        console.log("🔍 Getting user from Supabase...");
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        console.log("👤 User:", user?.email, "ID:", user?.id);
-
-        if (!isMounted) {
-          console.log("❌ Component unmounted, stopping");
-          return;
-        }
-
-        if (user) {
-          console.log("✅ User found, loading data...");
-
-          // Load data in parallel without timeout
-          console.log("📊 Starting data queries...");
-
-          // Test database connection first
-          console.log("🔍 Testing database connection...");
-
-          // Test 1: Check if tables exist
-          console.log("🔍 Test 1: Checking affiliate_referrers table...");
-          const { data: testData1, error: testError1 } = await supabase
-            .from("affiliate_referrers")
-            .select("count")
-            .limit(1);
-
-          console.log("🔍 affiliate_referrers test:", {
-            testData1,
-            testError1,
-          });
-
-          // Test 2: Check if user has any data
-          console.log("🔍 Test 2: Checking user referral data...");
-          const { data: testData2, error: testError2 } = await supabase
-            .from("affiliate_referrers")
-            .select("*")
-            .eq("user_id", user.id);
-
-          console.log("🔍 User referral data test:", { testData2, testError2 });
-
-          // Test 3: Check dashboard_kpis
-          console.log("🔍 Test 3: Checking user KPIs...");
-          const { data: testData3, error: testError3 } = await supabase
-            .from("dashboard_kpis")
-            .select("*")
-            .eq("user_id", user.id);
-
-          console.log("🔍 User KPIs test:", { testData3, testError3 });
-
-          console.log("🔍 Starting main data queries...");
-          const [referralCodeResult, kpiResult] = await Promise.allSettled([
-            getReferralCode(user.id),
-            calculateUserReportsTotals(),
-          ]);
-
-          if (!isMounted) {
-            console.log("❌ Component unmounted during queries, stopping");
-            return;
-          }
-
-          console.log("📈 Query results:", { referralCodeResult, kpiResult });
-
-          // Handle referral code
-          if (referralCodeResult.status === "fulfilled") {
-            setReferralCode(referralCodeResult.value || "");
-            console.log("🎯 Referral code:", referralCodeResult.value);
-          } else {
-            console.error(
-              "❌ Error loading referral code:",
-              referralCodeResult.reason
-            );
-            // Set a default referral code if none exists
-            setReferralCode("VX-" + user.id.slice(0, 8).toUpperCase());
-          }
-
-          // Handle KPIs from user_reports totals
-          if (kpiResult.status === "fulfilled") {
-            setKpis(kpiResult.value);
-            console.log("📊 KPIs loaded from user_reports:", kpiResult.value);
-          } else {
-            console.error(
-              "❌ Error loading KPIs from user_reports:",
-              kpiResult.status === "rejected" ? kpiResult.reason : "No data"
-            );
-            // Set default KPIs if none exist
-            setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
-          }
-        } else {
-          console.log("❌ No user found");
-        }
-      } catch (error) {
-        console.error("💥 Error loading dashboard data:", error);
-        if (isMounted) {
-          // Set default values on error
-          setReferralCode("VX-DEFAULT");
-          setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
-        }
-      } finally {
-        if (isMounted) {
-          console.log("🏁 Setting loading to false");
-          setLoading(false);
-        }
-      }
-    };
-
     console.log("🚀 Starting loadData function");
-
-    // Add a timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
-      console.log("⏰ Loading timeout reached - forcing completion");
-      if (isMounted) {
-        setLoading(false);
-        setReferralCode("VX-TIMEOUT");
-        setKpis({ clicks: 0, referrals: 0, customers: 0, earnings: 0 });
-      }
-    }, 10000); // 10 second timeout
-
-    loadData().finally(() => {
-      clearTimeout(timeoutId);
-    });
-
-    return () => {
-      console.log("🧹 HomePage useEffect cleanup");
-      clearTimeout(timeoutId);
-      isMounted = false;
-    };
+    loadData();
   }, []);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    await loadData();
+    setRetrying(false);
+  };
 
   if (loading) {
     return (
@@ -173,6 +116,31 @@ export default function HomePage() {
           variant="default"
           size="lg"
         />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-8">
+        <div className="text-center py-12">
+          <div className="text-gray-500 mb-6">
+            <AlertCircle size={48} className="mx-auto mb-4 text-red-500" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              Error Loading Dashboard Data
+            </h3>
+            <p className="text-gray-600 mb-4">{error}</p>
+            <Button
+              color="primary"
+              variant="flat"
+              startContent={<RefreshCw size={16} />}
+              onPress={handleRetry}
+              isLoading={retrying}
+            >
+              Retry
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }

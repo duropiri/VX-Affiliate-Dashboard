@@ -11,6 +11,7 @@ import {
   Image as HeroImage,
 } from "@heroui/react";
 import { supabase } from "@/lib/supabase";
+import { signOut } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
 
 function ResetPasswordContent() {
@@ -106,7 +107,7 @@ function ResetPasswordContent() {
       });
 
       // Sign out the user after password reset
-      await supabase.auth.signOut();
+      await signOut();
 
       // Redirect to auth page after a short delay
       setTimeout(() => {

@@ -21,10 +21,11 @@ import {
 } from "@heroui/react";
 import { siteConfig } from "@/config/site";
 import { supabase } from "@/lib/supabase";
-import { isUserAdmin } from "@/lib/auth";
+import { isUserAdmin, signOut } from "@/lib/auth";
 import { User } from "@supabase/supabase-js";
 import { Settings } from "lucide-react";
 import { GrUserAdmin } from "react-icons/gr";
+import { addToast } from "@heroui/toast";
 
 export function Navbar() {
   const router = useRouter();
@@ -60,10 +61,27 @@ export function Navbar() {
 
   const handleSignOut = async () => {
     try {
-      await supabase.auth.signOut();
-      window.location.href = "/auth";
+      console.log('🔄 Signing out from navbar...');
+      await signOut();
+      
+      addToast({
+        title: "Signed Out",
+        description: "You have been successfully signed out.",
+        color: "success",
+      });
+      
+      // Use router.push instead of window.location for better navigation
+      router.push("/auth");
     } catch (error) {
       console.error("Error signing out:", error);
+      addToast({
+        title: "Sign Out Error",
+        description: "There was an error signing out. Please try again.",
+        color: "danger",
+      });
+      
+      // Force redirect even if sign out fails
+      router.push("/auth");
     }
   };
 
