@@ -64,6 +64,7 @@ ChartJS.register(
 export default function ReportsPage() {
   const [reports, setReports] = useState<UserReports | null>(null);
   const [loading, setLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTimeframe, setSelectedTimeframe] = useState("Last 30 Days");
   const [filteredData, setFilteredData] = useState<DailyData[]>([]);
@@ -137,10 +138,14 @@ export default function ReportsPage() {
   };
 
   // Load reports from database
-  const loadReports = async () => {
+  const loadReports = async (isTimeframeChange = false) => {
     try {
       console.log("🔄 Loading reports from database...");
-      setLoading(true);
+      if (isTimeframeChange) {
+        setChartLoading(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       
       const reportsData = await getUserReports(selectedTimeframe);
@@ -162,17 +167,27 @@ export default function ReportsPage() {
         color: "danger",
       });
     } finally {
-      setLoading(false);
+      if (isTimeframeChange) {
+        setChartLoading(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadReports();
+    // Initial load
+    if (!reports) {
+      loadReports(false);
+    } else {
+      // Timeframe change - only load chart data
+      loadReports(true);
+    }
   }, [selectedTimeframe]);
 
   const handleRetry = async () => {
     setRetrying(true);
-    await loadReports();
+    await loadReports(false);
     setRetrying(false);
   };
 
@@ -477,6 +492,7 @@ export default function ReportsPage() {
                             color="primary"
                             endContent={<ChevronDownIcon size={16} />}
                             className="min-w-[200px]"
+                            isLoading={chartLoading}
                           >
                             <span className="text-sm font-semibold">
                               Timeframe:
@@ -492,7 +508,9 @@ export default function ReportsPage() {
                           selectedKeys={new Set([selectedTimeframe])}
                           onSelectionChange={(keys) => {
                             const selected = Array.from(keys)[0] as string;
-                            if (selected) setSelectedTimeframe(selected);
+                            if (selected && selected !== selectedTimeframe) {
+                              setSelectedTimeframe(selected);
+                            }
                           }}
                         >
                           {timeframeOptions.map((option) => (
@@ -549,7 +567,17 @@ export default function ReportsPage() {
                       >
                         <div className="relative px-0 lg:px-6 py-auto">
                           <div className="h-48 lg:h-96">
-                            <Line data={chartData} options={chartOptions} />
+                            {chartLoading ? (
+                              <div className="flex items-center justify-center h-full">
+                                <Spinner
+                                  classNames={{ label: "text-foreground mt-4" }}
+                                  variant="default"
+                                  size="lg"
+                                />
+                              </div>
+                            ) : (
+                              <Line data={chartData} options={chartOptions} />
+                            )}
                           </div>
                         </div>
                       </Tab>

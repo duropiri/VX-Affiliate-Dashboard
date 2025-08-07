@@ -12,9 +12,10 @@ import {
   Divider,
   Spinner,
 } from "@heroui/react";
-import { Settings, User, Bell, Upload } from "lucide-react";
+import { Settings, User, Bell, Upload, Bug } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addToast } from "@heroui/toast";
+import { diagnoseProfileUpdate, checkDatabaseTables, debugSession, forceSessionRefresh } from "@/lib/auth";
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
@@ -180,6 +181,44 @@ export default function SettingsPage() {
     setLoading(true);
 
     try {
+      // Test database connection first
+      console.log("🔍 Testing database connection...");
+      const { data: testData, error: testError } = await supabase
+        .from("affiliate_profiles")
+        .select("count")
+        .limit(1);
+
+      console.log("🔍 Database connection test:", { testData, testError });
+
+      if (testError) {
+        console.error("❌ Database connection failed:", testError);
+        addToast({
+          title: "Database connection failed",
+          description: testError.message,
+          color: "danger",
+        });
+        return;
+      }
+
+      // Test table structure
+      console.log("🔍 Testing table structure...");
+      const { data: structureData, error: structureError } = await supabase
+        .from("affiliate_profiles")
+        .select("*")
+        .limit(1);
+
+      console.log("🔍 Table structure test:", { structureData, structureError });
+
+      if (structureError) {
+        console.error("❌ Table structure error:", structureError);
+        addToast({
+          title: "Database table error",
+          description: structureError.message,
+          color: "danger",
+        });
+        return;
+      }
+
       console.log("🔍 Getting user from Supabase...");
       const {
         data: { user },
@@ -195,54 +234,223 @@ export default function SettingsPage() {
       }
 
       console.log("✅ User found, updating profile...");
-      console.log("📝 Profile data to save:", {
+      
+      // Prepare the profile data
+      const profileData = {
         user_id: user.id,
+        user_aryeo_id: user.id, // Required field
+        user_email: (user.email || "").toLowerCase(),
         first_name: profile.firstName,
         last_name: profile.lastName,
         avatar_url: profile.avatarUrl,
         social_links: profile.socialLinks,
         notifications: profile.notifications,
-      });
+      };
 
-      const { data, error } = await supabase
+      console.log("📝 Profile data to save:", profileData);
+
+      // First, check if the profile exists
+      const { data: existingProfile, error: checkError } = await supabase
         .from("affiliate_profiles")
-        .upsert({
-          user_id: user.id,
-          user_aryeo_id: user.id, // Required field
-          user_email: user.email || "",
-          first_name: profile.firstName,
-          last_name: profile.lastName,
-          avatar_url: profile.avatarUrl,
-          social_links: profile.socialLinks,
-          notifications: profile.notifications,
-        })
-        .select()
+        .select("id")
+        .eq("user_id", user.id)
         .single();
 
-      console.log("🔍 Profile save result:", { data, error });
+      console.log("🔍 Existing profile check:", { existingProfile, checkError });
 
-      if (error) {
-        console.error("❌ Error saving profile:", error);
+      let result;
+      if (checkError && checkError.code === 'PGRST116') {
+        // Profile doesn't exist, insert new one
+        console.log("🆕 Creating new profile...");
+        result = await supabase
+          .from("affiliate_profiles")
+          .insert(profileData)
+          .select()
+          .single();
+      } else if (checkError) {
+        // Some other error occurred
+        console.error("❌ Error checking existing profile:", checkError);
+        addToast({
+          title: "Failed to check profile",
+          description: checkError.message,
+          color: "danger",
+        });
+        return;
+      } else {
+        // Profile exists, update it
+        console.log("🔄 Updating existing profile...");
+        result = await supabase
+          .from("affiliate_profiles")
+          .update(profileData)
+          .eq("user_id", user.id)
+          .select()
+          .single();
+      }
+
+      console.log("🔍 Profile save result:", result);
+
+      if (result.error) {
+        console.error("❌ Error saving profile:", result.error);
+        console.error("Error details:", {
+          message: result.error.message,
+          code: result.error.code,
+          details: result.error.details,
+          hint: result.error.hint
+        });
         addToast({
           title: "Failed to update profile",
+          description: result.error.message || "Database error occurred",
           color: "danger",
         });
         return;
       }
 
-      console.log("✅ Profile saved successfully:", data);
+      console.log("✅ Profile saved successfully:", result.data);
       addToast({
         title: "Profile updated successfully!",
         color: "success",
       });
     } catch (error) {
       console.error("💥 Error in handleSaveProfile:", error);
+      console.error("Error type:", typeof error);
+      console.error("Error constructor:", error?.constructor?.name);
+      console.error("Full error object:", error);
+      
+      let errorMessage = "An unexpected error occurred";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        errorMessage = (error as any).message;
+      }
+      
       addToast({
         title: "Failed to update profile",
+        description: errorMessage,
         color: "danger",
       });
     } finally {
       console.log("🏁 Setting loading to false");
+      setLoading(false);
+    }
+  };
+
+  const handleDiagnoseProfile = async () => {
+    console.log("🔍 Starting profile diagnosis...");
+    setLoading(true);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        addToast({
+          title: "No user found",
+          color: "danger",
+        });
+        return;
+      }
+
+      // First check if database tables exist
+      console.log("🔍 Checking database tables...");
+      const tableCheck = await checkDatabaseTables();
+      
+      if (!tableCheck.success) {
+        console.error("❌ Database table check failed:", tableCheck.error);
+        addToast({
+          title: "Database setup issue",
+          description: tableCheck.error || "Missing required database tables. Please run the database schema.",
+          color: "danger",
+        });
+        return;
+      }
+
+      console.log("✅ Database tables check passed");
+
+      const diagnosis = await diagnoseProfileUpdate(user.id);
+      
+      if (diagnosis.success) {
+        console.log("✅ Diagnosis successful:", diagnosis.details);
+        addToast({
+          title: "Diagnosis completed",
+          description: "All tests passed. Check console for details.",
+          color: "success",
+        });
+      } else {
+        console.error("❌ Diagnosis failed:", diagnosis.error, diagnosis.details);
+        addToast({
+          title: "Diagnosis failed",
+          description: diagnosis.error || "Unknown error",
+          color: "danger",
+        });
+      }
+    } catch (error) {
+      console.error("💥 Error in diagnosis:", error);
+      addToast({
+        title: "Diagnosis error",
+        description: error instanceof Error ? error.message : "Unknown error",
+        color: "danger",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDebugSession = () => {
+    console.log("🔍 Debugging session...");
+    const sessionInfo = typeof window !== 'undefined' ? debugSession() : { hasAccessToken: false, hasRefreshToken: false, expiresIn: 0, isExpired: true } as any;
+    
+    if (sessionInfo.hasAccessToken && sessionInfo.hasRefreshToken && !sessionInfo.isExpired) {
+      addToast({
+        title: "Session Status: Healthy",
+        description: `Tokens present, expires in ${Math.floor(sessionInfo.expiresIn / 60)} minutes`,
+        color: "success",
+      });
+    } else if (sessionInfo.isExpired) {
+      addToast({
+        title: "Session Status: Expired",
+        description: "Session has expired. Check console for details.",
+        color: "warning",
+      });
+    } else {
+      addToast({
+        title: "Session Status: Missing Tokens",
+        description: "No valid session found. Check console for details.",
+        color: "danger",
+      });
+    }
+  };
+
+  const handleForceRefresh = async () => {
+    console.log("🔄 Force refreshing session...");
+    setLoading(true);
+    
+    try {
+      const success = await forceSessionRefresh();
+      
+      if (success) {
+        addToast({
+          title: "Session Refreshed",
+          description: "Session has been refreshed successfully.",
+          color: "success",
+        });
+      } else {
+        addToast({
+          title: "Session Refresh Failed",
+          description: "Failed to refresh session. Check console for details.",
+          color: "danger",
+        });
+      }
+    } catch (error) {
+      console.error("💥 Error in force refresh:", error);
+      addToast({
+        title: "Session Refresh Error",
+        description: error instanceof Error ? error.message : "Unknown error",
+        color: "danger",
+      });
+    } finally {
       setLoading(false);
     }
   };
@@ -361,6 +569,38 @@ export default function SettingsPage() {
                 isLoading={loading}
               >
                 Save Profile
+              </Button>
+
+              <Button
+                color="secondary"
+                variant="bordered"
+                className="w-full"
+                onPress={handleDiagnoseProfile}
+                isLoading={loading}
+                startContent={<Bug size={16} />}
+              >
+                Diagnose Profile Issue
+              </Button>
+
+              <Button
+                color="secondary"
+                variant="bordered"
+                className="w-full"
+                onPress={handleDebugSession}
+                startContent={<Bug size={16} />}
+              >
+                Debug Session
+              </Button>
+
+              <Button
+                color="secondary"
+                variant="bordered"
+                className="w-full"
+                onPress={handleForceRefresh}
+                isLoading={loading}
+                startContent={<Bug size={16} />}
+              >
+                Force Session Refresh
               </Button>
             </CardBody>
           </Card>

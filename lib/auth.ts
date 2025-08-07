@@ -1,118 +1,120 @@
-import { supabase, optimizedQuery } from './supabase';
+import { supabase, optimizedQuery, withAbort } from './supabase';
 import { User } from '@supabase/supabase-js';
 
+// Debug flag for verbose logging
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+// Debug logging helper
+const debugLog = (message: string, ...args: any[]) => {
+  if (DEBUG_MODE) {
+    console.log(message, ...args);
+  }
+};
+
+// Keep timezone in one place
+const TIMEZONE = 'America/Edmonton';
+
+// Email normalization helper
+const normalizedEmail = (email: string | null | undefined): string => {
+  return (email ?? '').toLowerCase();
+};
+
+// SSR-safe base URL
+const getBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+};
+
 export const signInWithMagicLink = async (email: string) => {
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: `${window.location.origin}/home`,
-    },
-  });
-  
-  if (error) {
-    throw error;
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: `${getBaseUrl()}/home`,
+      },
+    });
+    
+    if (error) {
+      throw error; // Throw to trigger retry/timeout logic
+    }
+  } catch (error) {
+    console.error('Error signing in with magic link:', error);
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 export const signInWithGoogle = async () => {
-  // Use callback for local development, direct redirect for production
-  const redirectTo = process.env.NODE_ENV === 'development' 
-    ? `${window.location.origin}/auth/callback`
-    : `${window.location.origin}/home`;
+  try {
+    // Use callback for local development, direct redirect for production
+    const redirectTo = process.env.NODE_ENV === 'development' 
+      ? `${getBaseUrl()}/auth/callback`
+      : `${getBaseUrl()}/home`;
 
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: {
-      redirectTo,
-      queryParams: {
-        access_type: 'offline',
-        prompt: 'consent',
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
       },
-    },
-  });
-  if (error) throw error;
+    });
+    if (error) throw error; // Throw to trigger retry/timeout logic
+  } catch (error) {
+    console.error('Error signing in with Google:', error);
+    throw error; // Re-throw to let the caller handle it
+  }
 };
 
 export const signInWithGithub = async () => {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'github',
-    options: {
-      redirectTo: `${window.location.origin}/home`,
-    },
-  });
-  
-  if (error) {
-    throw error;
-  }
-};
-
-// Enhanced user credential storage
-export const storeUserCredentials = (email: string, password: string) => {
   try {
-    if (typeof window !== 'undefined') {
-      const credentials = { email, password, timestamp: Date.now() };
-      localStorage.setItem('vx_user_credentials', JSON.stringify(credentials));
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'github',
+      options: {
+        redirectTo: `${getBaseUrl()}/home`,
+      },
+    });
+    
+    if (error) {
+      throw error; // Throw to trigger retry/timeout logic
     }
   } catch (error) {
-    console.error('Error storing user credentials:', error);
+    console.error('Error signing in with GitHub:', error);
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
-export const getUserCredentials = () => {
-  try {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('vx_user_credentials');
-      if (stored) {
-        const credentials = JSON.parse(stored);
-        // Check if credentials are less than 24 hours old
-        if (Date.now() - credentials.timestamp < 24 * 60 * 60 * 1000) {
-          return credentials;
-        } else {
-          // Remove expired credentials
-          localStorage.removeItem('vx_user_credentials');
-        }
-      }
-    }
-    return null;
-  } catch (error) {
-    console.error('Error retrieving user credentials:', error);
-    return null;
-  }
-};
+// REMOVED: User credential storage functions
+// These were removed for security reasons - storing passwords in localStorage is a security risk.
+// Supabase's persistSession and refresh tokens handle session persistence securely.
 
-export const clearUserCredentials = () => {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('vx_user_credentials');
-    }
-  } catch (error) {
-    console.error('Error clearing user credentials:', error);
-  }
-};
-
-// Enhanced sign in with email that stores credentials
+// Enhanced sign in with email
 export const signInWithEmail = async (email: string, password: string) => {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
-  
-  if (error) {
-    throw error;
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    
+    if (error) {
+      throw error; // Throw to trigger retry/timeout logic
+    }
+
+    // Check approval status with enhanced error handling
+    const approved = await handlePostAuth(data.user);
+    if (!approved) {
+      await supabase.auth.signOut();
+      throw new Error('Account not approved');
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error signing in with email:', error);
+    throw error; // Re-throw to let the caller handle it
   }
-
-  // Store credentials for future use
-  storeUserCredentials(email, password);
-
-  // Check approval status with enhanced error handling
-  const approved = await handlePostAuth(data.user);
-  if (!approved) {
-    await supabase.auth.signOut();
-    clearUserCredentials();
-    throw new Error('Account not approved');
-  }
-
-  return data;
 };
 
 export const signUpWithEmail = async (
@@ -120,168 +122,143 @@ export const signUpWithEmail = async (
   password: string,
   userData: Record<string, any>
 ) => {
-  // Call our admin endpoint
-  const res = await fetch('/api/admin/create-user', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, userData }),
-  });
-  
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || 'Sign-up failed');
-  return json;
+  try {
+    // Call our admin endpoint
+    const res = await fetch('/api/admin/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, userData }),
+    });
+    
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Sign-up failed');
+    return json;
+  } catch (error) {
+    console.error('Error signing up with email:', error);
+    throw error; // Re-throw to let the caller handle it
+  }
 };
 
 export const createUserWithPassword = async (email: string, password: string, userData: any) => {
-  // Use server-side API endpoint for secure user creation
-  const response = await fetch('/api/admin/create-user', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      email,
-      password,
-      userData,
-    }),
-  });
+  try {
+    // Use server-side API endpoint for secure user creation
+    const response = await fetch('/api/admin/create-user', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email,
+        password,
+        userData,
+      }),
+    });
 
-  const result = await response.json();
+    const result = await response.json();
 
-  if (!response.ok) {
-    throw new Error(result.error || 'Failed to create user');
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to create user');
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error creating user with password:', error);
+    throw error; // Re-throw to let the caller handle it
   }
-
-  return result;
 };
 
 export const resetPassword = async (email: string) => {
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/auth/reset-password`,
-  });
-  
-  if (error) {
-    throw error;
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${getBaseUrl()}/auth/reset-password`,
+    });
+    
+    if (error) {
+      throw error; // Throw to trigger retry/timeout logic
+    }
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 export const signOut = async () => {
   try {
-    console.log('🔄 Signing out user...');
-    
-    // Clear stored credentials first
-    clearUserCredentials();
+    debugLog('🔄 Signing out user...');
     
     // Sign out from Supabase
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error signing out from Supabase:', error);
-      throw error;
+      throw error; // Throw to trigger retry/timeout logic
     }
     
-    console.log('✅ User signed out successfully');
+    debugLog('✅ User signed out successfully');
   } catch (error) {
     console.error('Error in signOut:', error);
-    // Even if Supabase sign out fails, clear credentials
-    clearUserCredentials();
-    throw error;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 export const getUser = async (): Promise<User | null> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  return user;
-};
-
-// Wait for Supabase client to be ready
-const waitForSupabaseReady = async (maxWait = 5000): Promise<boolean> => {
-  console.log('Starting Supabase client readiness check...');
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < maxWait) {
-    try {
-      console.log('Testing Supabase client connection...');
-      // Test a simple query to see if client is ready
-      const { data, error } = await supabase
-        .from('approved_users')
-        .select('count')
-        .limit(1);
-      
-      console.log('Readiness test result:', { data, error });
-      
-      if (!error) {
-        console.log('Supabase client is ready');
-        return true;
-      } else {
-        console.log('Supabase client not ready yet, error:', error);
-      }
-    } catch (error) {
-      console.log('Supabase client readiness test failed:', error);
-      // Client not ready yet
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    
+    if (error) {
+      console.error('Error getting user:', error);
+      throw error; // Throw to trigger retry/timeout logic
     }
     
-    // Wait 100ms before next attempt
-    console.log('Waiting 100ms before next readiness test...');
-    await new Promise(resolve => setTimeout(resolve, 100));
+    return user;
+  } catch (error) {
+    console.error('Error getting user:', error);
+    throw error; // Re-throw to let the caller handle it
   }
-  
-  console.warn('Supabase client not ready after timeout');
-  return false;
 };
+
+// REMOVED: waitForSupabaseReady function
+// This function was removed as it was causing excessive console logging
+// and is not needed for normal operation - Supabase client is ready immediately
 
 // Enhanced isUserApproved with better error handling and longer timeouts
 export const isUserApproved = async (userId: string): Promise<boolean> => {
   const maxRetries = 3;
-  const baseDelay = 2000; // Increased to 2 seconds base delay
+  const baseDelay = 3000; // Increased to 3 seconds base delay
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`Checking isUserApproved for user ID: ${userId} (attempt ${attempt}/${maxRetries})`);
+      debugLog(`Checking isUserApproved for user ID: ${userId} (attempt ${attempt}/${maxRetries})`);
       
-      // Simple delay to let OAuth flow complete
-      if (attempt === 1) {
-        console.log('Waiting 2 seconds for OAuth flow to complete...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      
-      // Use optimized query helper for production with longer timeout
+      // Use optimized query helper with caching and connection health checks
       const queryResult = await optimizedQuery(async () => {
-        return supabase
+        const { data, error } = await supabase
           .from('approved_users')
           .select('user_id')
           .eq('user_id', userId)
           .eq('status', 'active')
           .limit(1);
-      }, 20000); // 20 second timeout for better reliability
+        
+        // Throw on any Supabase error to trigger retry/timeout logic
+        if (error) throw error;
+        return data;
+      }, 30000, { // 30 second timeout for better reliability
+        useCache: true,
+        cacheKey: `user_approved_${userId}`,
+        cacheTTL: 60000 // 1 minute cache for approval status
+      });
       
-      console.log('isUserApproved query result:', queryResult);
+      debugLog('isUserApproved query result:', queryResult);
 
-      if (queryResult.error) {
-        if (queryResult.error.code === 'PGRST116') {
-          // No rows found - user not approved
-          console.log('User not found in approved_users table');
-          return false;
-        } else {
-          console.error('Error checking user approval:', queryResult.error);
-          if (attempt < maxRetries) {
-            const delay = baseDelay * Math.pow(2, attempt - 1);
-            console.log(`Retrying in ${delay}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
-          throw new Error(`Failed to check user approval after ${maxRetries} attempts`);
-        }
-      }
-
-      const result = !!(queryResult.data && queryResult.data.length > 0);
-      console.log('isUserApproved final result:', result);
+      // queryResult is now the data directly, or null if no rows found
+      const result = !!(queryResult && queryResult.length > 0);
+      debugLog('isUserApproved final result:', result);
       return result;
     } catch (error) {
       console.error(`Error checking user approval (attempt ${attempt}):`, error);
       
       if (attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt - 1);
-        console.log(`Retrying in ${delay}ms...`);
+        debugLog(`Retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -295,50 +272,44 @@ export const isUserApproved = async (userId: string): Promise<boolean> => {
 // Check if an email is approved (for cross-referencing)
 export const isEmailApproved = async (email: string): Promise<boolean> => {
   try {
-    console.log('Checking isEmailApproved for email:', email);
+    const normalized = normalizedEmail(email);
+    debugLog('Checking isEmailApproved for email:', normalized);
+    
     const { data, error } = await supabase
       .from('approved_users')
       .select('user_email')
-      .eq('user_email', email)
+      .eq('user_email', normalized)
       .eq('status', 'active')
-      .single();
+      .maybeSingle();
 
-    console.log('isEmailApproved result:', { data, error });
-
-    if (error && error.code !== 'PGRST116') {
+    debugLog('isEmailApproved result:', { data, error });
+    
+    if (error) {
       console.error('Error checking email approval:', error);
-      return false;
+      throw error; // Throw to trigger retry/timeout logic
     }
-
-    const result = !!data;
-    console.log('isEmailApproved final result:', result);
-    return result;
+    
+    return !!data; // false when no row found
   } catch (error) {
     console.error('Error checking email approval:', error);
-    return false;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 // Debug function to check what's in the approved_users table
 export const debugApprovedUsers = async () => {
   try {
-    console.log('Debugging approved_users table...');
+    debugLog('Debugging approved_users table...');
     
     // Add timeout to prevent hanging
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Debug query timeout')), 5000);
-    });
-    
-    const queryPromise = supabase
-      .from('approved_users')
-      .select('*');
+    const { data, error } = await withAbort(
+      supabase
+        .from('approved_users')
+        .select('*'),
+      5000
+    ) as any;
 
-    const { data, error } = await Promise.race([
-      queryPromise,
-      timeoutPromise
-    ]) as any;
-
-    console.log('All approved_users:', { data, error });
+    debugLog('All approved_users:', { data, error });
     return data;
   } catch (error) {
     console.error('Error debugging approved_users:', error);
@@ -349,40 +320,32 @@ export const debugApprovedUsers = async () => {
 // Handle post-authentication flow for all auth methods
 export const handlePostAuth = async (user: User) => {
   try {
-    console.log('Handling post-auth for user:', user.email);
-    console.log('User ID:', user.id);
-    console.log('User metadata:', user.user_metadata);
+    debugLog('Handling post-auth for user:', user.email);
+    debugLog('User ID:', user.id);
     
     // First check if user is approved by user ID
     let isApproved = await isUserApproved(user.id);
-    console.log('Initial approval check result:', isApproved);
+    debugLog('Initial approval check result:', isApproved);
     
     if (!isApproved) {
       // Check if user is approved by email (cross-reference for OAuth)
-      console.log('User not approved by ID, checking by email:', user.email);
+      debugLog('User not approved by ID, checking by email:', user.email);
       
+      const normalized = normalizedEmail(user.email);
       const { data: approvedUser, error: approvalError } = await supabase
         .from('approved_users')
         .select('*')
-        .eq('user_email', user.email)
+        .eq('user_email', normalized)
         .eq('status', 'active')
-        .single();
+        .maybeSingle();
 
-      console.log('Email approval check result:', { approvedUser, approvalError });
+      debugLog('Email approval check result:', { approvedUser, approvalError });
 
-      if (approvalError) {
-        if (approvalError.code === 'PGRST116') {
-          // No approved user found with this email
-          console.log('No approved user found with this email');
-          return false;
-        } else {
-          console.error('Error checking approval by email:', approvalError);
-          return false;
-        }
-      }
+      if (approvalError) throw approvalError;
+      if (!approvedUser) return false;
 
       if (approvedUser) {
-        console.log('User approved by email cross-reference, updating user_id');
+        debugLog('User approved by email cross-reference, updating user_id');
         
         // Update the approval record with the new user ID
         const { error: updateError } = await supabase
@@ -391,20 +354,21 @@ export const handlePostAuth = async (user: User) => {
             user_id: user.id,
             updated_at: new Date().toISOString()
           })
-          .eq('user_email', user.email);
+          .eq('user_email', normalized)
+          .eq('status', 'active');
 
         if (updateError) {
           console.error('Error updating approval record:', updateError);
           // Even if update fails, user is still approved
           isApproved = true;
         } else {
-          console.log('Successfully updated approval record with new user ID');
+          debugLog('Successfully updated approval record with new user ID');
           isApproved = true;
         }
       }
     }
 
-    console.log('handlePostAuth final result:', isApproved);
+    debugLog('handlePostAuth final result:', isApproved);
     return isApproved;
   } catch (error) {
     console.error('Error in post-auth handling:', error);
@@ -417,19 +381,19 @@ export const approveUser = async (userEmail: string, approvedByUserId: string): 
   try {
     const { data, error } = await supabase
       .rpc('approve_user', { 
-        user_email: userEmail, 
+        user_email: normalizedEmail(userEmail), 
         approved_by_user_id: approvedByUserId 
       });
 
     if (error) {
       console.error('Error approving user:', error);
-      return false;
+      throw error; // Throw to trigger retry/timeout logic
     }
 
     return data || false;
   } catch (error) {
     console.error('Error approving user:', error);
-    return false;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -439,7 +403,7 @@ export const isUserAdmin = (user: User | null): boolean => {
     return false;
   }
   
-  return user.email.endsWith('@virtualxposure.com');
+  return normalizedEmail(user.email).endsWith('@virtualxposure.com');
 };
 
 // User profile management
@@ -472,7 +436,7 @@ export const createUserProfile = async (user: User) => {
       .insert({
         user_id: user.id,
         user_aryeo_id: user.id, // Using user.id as aryeo_id for now
-        user_email: user.email || '',
+        user_email: normalizedEmail(user.email),
         first_name: user.user_metadata?.full_name?.split(' ')[0] || 'User',
         last_name: user.user_metadata?.full_name?.split(' ').slice(1).join(' ') || 'Name',
         avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture,
@@ -486,54 +450,32 @@ export const createUserProfile = async (user: User) => {
 
     if (error) {
       console.error('Error creating user profile:', error);
-      throw error;
+      throw error; // Throw to trigger retry/timeout logic
     }
   } catch (error) {
     console.error('Failed to create user profile:', error);
-    throw error;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 export const getUserProfile = async (userId: string): Promise<UserProfile | null> => {
-  let retries = 3;
-  
-  while (retries > 0) {
-    try {
-      const { data, error } = await supabase
-        .from('affiliate_profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
+  try {
+    const { data, error } = await supabase
+      .from('affiliate_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // No profile found - this is a valid state
-          console.log('No user profile found for user:', userId);
-          return null;
-        } else {
-          console.error(`Retry ${4 - retries}/3 - Error fetching user profile:`, error);
-          retries--;
-          if (retries > 0) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            continue;
-          }
-          throw error;
-        }
-      }
-
-      return data;
-    } catch (err) {
-      console.error(`Retry ${4 - retries}/3 - Exception fetching user profile:`, err);
-      retries--;
-      if (retries > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        continue;
-      }
-      throw err;
+    if (error) {
+      console.error('Error fetching user profile:', error);
+      throw error; // Throw to trigger retry/timeout logic
     }
+
+    return data; // null when not found
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    throw error; // Re-throw to let the caller handle it
   }
-  
-  throw new Error('Failed to fetch user profile after retries');
 };
 
 export const updateUserProfile = async (userId: string, updates: Partial<UserProfile>) => {
@@ -543,7 +485,8 @@ export const updateUserProfile = async (userId: string, updates: Partial<UserPro
     .eq('user_id', userId);
 
   if (error) {
-    throw error;
+    console.error('Error updating user profile:', error);
+    throw error; // Throw to trigger retry/timeout logic
   }
 };
 
@@ -561,65 +504,52 @@ export const createReferralCode = async (userId: string) => {
 
     if (error) {
       console.error('Error creating referral code:', error);
-      throw error;
+      throw error; // Throw to trigger retry/timeout logic
     }
 
     return code;
   } catch (error) {
     console.error('Failed to create referral code:', error);
-    throw error;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 export const getReferralCode = async (userId: string): Promise<string | null> => {
-  let retries = 3;
-  
-  while (retries > 0) {
-    try {
+  try {
+    debugLog('🔄 Fetching referral code for user:', userId);
+    
+    // Use optimized query helper with caching
+    const queryResult = await optimizedQuery(async () => {
       const { data, error } = await supabase
         .from('affiliate_referrers')
         .select('code')
         .eq('user_id', userId)
         .single();
+      
+      // Throw on any Supabase error to trigger retry/timeout logic
+      if (error) throw error;
+      return data;
+    }, 30000, { // 30 second timeout for better reliability
+      useCache: true,
+      cacheKey: `referral_code_${userId}`,
+      cacheTTL: 600000 // 10 minutes cache for referral codes
+    });
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // No referral code found - this is a valid state
-          console.log('No referral code found for user:', userId);
-          return null;
-        } else {
-          console.error(`Retry ${4 - retries}/3 - Error fetching referral code:`, error);
-          retries--;
-          if (retries > 0) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            continue;
-          }
-          throw error;
-        }
-      }
-
-      return data?.code || null;
-    } catch (err) {
-      console.error(`Retry ${4 - retries}/3 - Exception fetching referral code:`, err);
-      retries--;
-      if (retries > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        continue;
-      }
-      throw err;
-    }
+    // queryResult is now the data directly, or null if no rows found
+    const code = queryResult?.code || null;
+    debugLog('✅ Referral code loaded:', code);
+    return code;
+  } catch (error) {
+    console.error('Error fetching referral code:', error);
+    throw error; // Don't return null, throw the error
   }
-  
-  throw new Error('Failed to fetch referral code after retries');
 };
 
 const generateReferralCode = (): string => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => alphabet[b % alphabet.length]).join('');
 };
 
 // Asset management functions
@@ -643,13 +573,13 @@ export const getAssets = async (): Promise<Asset[] | null> => {
     
     if (error) {
       console.error('Error fetching assets:', error);
-      return null;
+      throw error; // Throw to trigger retry/timeout logic
     }
     
     return data;
   } catch (error) {
     console.error('Error fetching assets:', error);
-    return null;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -663,13 +593,13 @@ export const createAsset = async (assetData: Omit<Asset, 'id' | 'created_at' | '
     
     if (error) {
       console.error('Error creating asset:', error);
-      return null;
+      throw error; // Throw to trigger retry/timeout logic
     }
     
     return data;
   } catch (error) {
     console.error('Error creating asset:', error);
-    return null;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -684,13 +614,13 @@ export const updateAsset = async (id: string, assetData: Partial<Asset>): Promis
     
     if (error) {
       console.error('Error updating asset:', error);
-      return null;
+      throw error; // Throw to trigger retry/timeout logic
     }
     
     return data;
   } catch (error) {
     console.error('Error updating asset:', error);
-    return null;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -703,13 +633,13 @@ export const deleteAsset = async (id: string): Promise<boolean> => {
     
     if (error) {
       console.error('Error deleting asset:', error);
-      return false;
+      throw error; // Throw to trigger retry/timeout logic
     }
     
     return true;
   } catch (error) {
     console.error('Error deleting asset:', error);
-    return false;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -770,30 +700,33 @@ export const getUserReports = async (timeframe: string = "Last 30 Days"): Promis
       return null;
     }
 
-    console.log('🔄 Fetching user reports for:', user.id);
+    debugLog('🔄 Fetching user reports for:', user.id);
     
-    // Get the user_reports from dashboard_kpis with optimized query helper
+    // Get the user_reports from dashboard_kpis with optimized query helper and caching
     const queryResult = await optimizedQuery(async () => {
-      return supabase
+      const { data, error } = await supabase
         .from('dashboard_kpis')
         .select('user_reports')
         .eq('user_id', user.id)
         .single();
-    }, 20000); // 20 second timeout for better reliability
+      
+      // Throw on any Supabase error to trigger retry/timeout logic
+      if (error) throw error;
+      return data;
+    }, 30000, { // 30 second timeout for better reliability
+      useCache: true,
+      cacheKey: `user_reports_${user.id}_${timeframe}`,
+      cacheTTL: 300000 // 5 minutes cache for user reports
+    });
     
-    if (queryResult.error) {
-      console.error('Error fetching user reports:', queryResult.error);
-      throw new Error('Failed to fetch user reports from database');
-    }
-    
-    if (queryResult.data && queryResult.data.user_reports) {
-      console.log('✅ User reports loaded:', queryResult.data.user_reports);
+    if (queryResult && queryResult.user_reports) {
+      debugLog('✅ User reports loaded:', queryResult.user_reports);
       
       // Transform the new structure to the expected format
-      const transformedReports = transformUserReports(queryResult.data.user_reports, timeframe);
+      const transformedReports = transformUserReports(queryResult.user_reports, timeframe);
       return transformedReports;
     } else {
-      console.log('⚠️ No user reports found in database');
+      debugLog('⚠️ No user reports found in database');
       throw new Error('No user reports found in database');
     }
   } catch (error) {
@@ -805,7 +738,7 @@ export const getUserReports = async (timeframe: string = "Last 30 Days"): Promis
 // Transform the new user_reports structure to the expected format
 export const transformUserReports = (userReports: any, selectedTimeframe: string = "Last 30 Days"): UserReports => {
   try {
-    console.log('🔄 Transforming user reports structure...');
+    debugLog('🔄 Transforming user reports structure...');
     
     const overview = userReports.overview || {};
     const dailyData: DailyData[] = [];
@@ -819,12 +752,12 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
     // Get the date range based on timeframe using MDT timezone
     const today = new Date();
     // Convert to MDT timezone
-    let mdtToday = new Date(today.toLocaleString("en-US", {timeZone: "America/Denver"}));
+    let mdtToday = new Date(today.toLocaleString("en-US", {timeZone: TIMEZONE}));
     mdtToday.setHours(23, 59, 59, 999);
     
     let startDate = new Date();
     // Convert to MDT timezone
-    let mdtStartDate = new Date(startDate.toLocaleString("en-US", {timeZone: "America/Denver"}));
+    let mdtStartDate = new Date(startDate.toLocaleString("en-US", {timeZone: TIMEZONE}));
     mdtStartDate.setHours(0, 0, 0, 0);
     
     // Calculate the date range based on selected timeframe
@@ -883,7 +816,7 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
     
     while (currentDate <= mdtToday) {
       // Format date in MDT timezone consistently
-      const dateKey = currentDate.toLocaleDateString("en-CA", {timeZone: "America/Denver"}); // YYYY-MM-DD format
+      const dateKey = currentDate.toLocaleDateString("en-CA", {timeZone: TIMEZONE}); // YYYY-MM-DD format
       allDates.push(dateKey);
       
       // Create next date in MDT timezone to avoid timezone issues
@@ -895,17 +828,16 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
     // For "All Time", check if we have data beyond the last year
     if (selectedTimeframe === "All Time") {
       const lastYearStart = new Date(mdtToday.getFullYear() - 1, 0, 1);
-      const lastYearStartKey = lastYearStart.toLocaleDateString("en-CA", {timeZone: "America/Denver"});
       
       // Check if we have any data from before last year
       const hasDataBeforeLastYear = Object.keys(overview).some(dateKey => {
-        const date = new Date(dateKey);
-        return date < lastYearStart;
+        const d = new Date(`${dateKey}T00:00:00`);
+        return d < lastYearStart;
       });
       
       // If no data before last year, fallback to "This Year" timeframe
       if (!hasDataBeforeLastYear) {
-        console.log('📊 All Time: No data before last year, falling back to This Year timeframe');
+        debugLog('📊 All Time: No data before last year, falling back to This Year timeframe');
         mdtStartDate = new Date(mdtToday.getFullYear(), 0, 1);
         mdtStartDate.setHours(0, 0, 0, 0);
         
@@ -913,7 +845,7 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
         allDates.length = 0; // Clear existing dates
         let currentDateThisYear = new Date(mdtStartDate);
         while (currentDateThisYear <= mdtToday) {
-          const dateKey = currentDateThisYear.toLocaleDateString("en-CA", {timeZone: "America/Denver"});
+          const dateKey = currentDateThisYear.toLocaleDateString("en-CA", {timeZone: TIMEZONE});
           allDates.push(dateKey);
           
           // Create next date in MDT timezone to avoid timezone issues
@@ -952,7 +884,7 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
     let finalData = dailyData;
     if (shouldAggregateByMonth(selectedTimeframe)) {
       finalData = aggregateDataByMonth(dailyData);
-      console.log('📊 Aggregated data by month for timeframe:', selectedTimeframe);
+      debugLog('📊 Aggregated data by month for timeframe:', selectedTimeframe);
     }
     
     const transformedReports: UserReports = {
@@ -965,7 +897,7 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
       dailyData: finalData,
     };
     
-    console.log('✅ Transformed reports:', transformedReports);
+    debugLog('✅ Transformed reports:', transformedReports);
     return transformedReports;
   } catch (error) {
     console.error('Error transforming user reports:', error);
@@ -978,10 +910,10 @@ export const updateUserReports = async (reports: UserReports): Promise<boolean> 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       console.error('No authenticated user found');
-      return false;
+      throw new Error('No authenticated user found');
     }
 
-    console.log('🔄 Updating user reports for:', user.id);
+    debugLog('🔄 Updating user reports for:', user.id);
     
     const { error } = await supabase
       .from('dashboard_kpis')
@@ -990,14 +922,14 @@ export const updateUserReports = async (reports: UserReports): Promise<boolean> 
     
     if (error) {
       console.error('Error updating user reports:', error);
-      return false;
+      throw error; // Throw to trigger retry/timeout logic
     }
     
-    console.log('✅ User reports updated successfully');
+    debugLog('✅ User reports updated successfully');
     return true;
   } catch (error) {
     console.error('Error updating user reports:', error);
-    return false;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -1010,10 +942,10 @@ export const updateUserDayData = async (
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       console.error('No authenticated user found');
-      return false;
+      throw new Error('No authenticated user found');
     }
 
-    console.log(`🔄 Updating data for ${date} for user:`, user.id);
+    debugLog(`🔄 Updating data for ${date} for user:`, user.id);
     
     // Get current user_reports
     const { data: kpiData, error: kpiError } = await supabase
@@ -1024,7 +956,7 @@ export const updateUserDayData = async (
     
     if (kpiError) {
       console.error('Error fetching current user reports:', kpiError);
-      return false;
+      throw kpiError; // Throw to trigger retry/timeout logic
     }
     
     let userReports = kpiData?.user_reports || {
@@ -1066,21 +998,21 @@ export const updateUserDayData = async (
     
     if (updateError) {
       console.error('Error updating day data:', updateError);
-      return false;
+      throw updateError; // Throw to trigger retry/timeout logic
     }
     
-    console.log(`✅ Data for ${date} updated successfully`);
+    debugLog(`✅ Data for ${date} updated successfully`);
     return true;
   } catch (error) {
     console.error('Error updating day data:', error);
-    return false;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
 // Trigger daily user reports update (admin function)
 export const triggerDailyReportsUpdate = async (): Promise<boolean> => {
   try {
-    console.log('🔄 Triggering daily reports update...');
+    debugLog('🔄 Triggering daily reports update...');
     
     const response = await fetch('/api/admin/update-user-reports', {
       method: 'POST',
@@ -1093,14 +1025,14 @@ export const triggerDailyReportsUpdate = async (): Promise<boolean> => {
 
     if (!response.ok) {
       console.error('Error triggering daily reports update:', result.error);
-      return false;
+      throw new Error(result.error || 'Failed to trigger daily reports update');
     }
 
-    console.log('✅ Daily reports update triggered successfully');
+    debugLog('✅ Daily reports update triggered successfully');
     return true;
   } catch (error) {
     console.error('Error triggering daily reports update:', error);
-    return false;
+    throw error; // Re-throw to let the caller handle it
   }
 };
 
@@ -1136,7 +1068,7 @@ const getDefaultUserReports = (): UserReports => {
 // Utility function to format dates in MDT timezone
 export const formatDateMDT = (date: Date | string): string => {
   const dateObj = typeof date === 'string' ? new Date(date) : date;
-  return dateObj.toLocaleDateString("en-CA", {timeZone: "America/Denver"}); // YYYY-MM-DD format
+  return dateObj.toLocaleDateString("en-CA", {timeZone: TIMEZONE}); // YYYY-MM-DD format
 };
 
 // Utility function to format dates for display in MDT timezone
@@ -1147,7 +1079,7 @@ export const formatDateDisplayMDT = (date: Date | string): string => {
     // If it's a date string in YYYY-MM-DD format, treat it as MDT date
     if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       // Create date in MDT timezone by appending time and timezone
-      dateObj = new Date(`${date}T00:00:00-06:00`); // MDT is UTC-6
+      dateObj = new Date(`${date}T00:00:00`); // Let toLocaleDateString handle timezone
     } else {
       dateObj = new Date(date);
     }
@@ -1156,7 +1088,7 @@ export const formatDateDisplayMDT = (date: Date | string): string => {
   }
   
   return dateObj.toLocaleDateString("en-US", {
-    timeZone: "America/Denver",
+    timeZone: TIMEZONE,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -1166,7 +1098,7 @@ export const formatDateDisplayMDT = (date: Date | string): string => {
 // Utility function to get current date in MDT timezone
 export const getCurrentDateMDT = (): Date => {
   const now = new Date();
-  return new Date(now.toLocaleString("en-US", {timeZone: "America/Denver"}));
+  return new Date(now.toLocaleString("en-US", {timeZone: TIMEZONE}));
 };
 
 // Utility function to check if timeframe should be aggregated by month
@@ -1219,28 +1151,31 @@ export const calculateUserReportsTotals = async (): Promise<{
       throw new Error('No authenticated user found');
     }
 
-    console.log('🔄 Calculating totals from user_reports for:', user.id);
+    debugLog('🔄 Calculating totals from user_reports for:', user.id);
     
-    // Get the user_reports from dashboard_kpis with optimized query helper
+    // Get the user_reports from dashboard_kpis with optimized query helper and caching
     const queryResult = await optimizedQuery(async () => {
-      return supabase
+      const { data, error } = await supabase
         .from('dashboard_kpis')
         .select('user_reports')
         .eq('user_id', user.id)
         .single();
-    }, 20000); // 20 second timeout for better reliability
+      
+      // Throw on any Supabase error to trigger retry/timeout logic
+      if (error) throw error;
+      return data;
+    }, 30000, { // 30 second timeout for better reliability
+      useCache: true,
+      cacheKey: `user_reports_totals_${user.id}`,
+      cacheTTL: 300000 // 5 minutes cache for user reports totals
+    });
     
-    if (queryResult.error) {
-      console.error('Error fetching user reports for totals:', queryResult.error);
-      throw new Error('Failed to fetch user reports from database');
-    }
-    
-    if (!queryResult.data || !queryResult.data.user_reports || !queryResult.data.user_reports.overview) {
-      console.log('No user_reports data found in database');
+    if (!queryResult || !queryResult.user_reports || !queryResult.user_reports.overview) {
+      debugLog('No user_reports data found in database');
       throw new Error('No user reports data found in database');
     }
     
-    const overview = queryResult.data.user_reports.overview;
+    const overview = queryResult.user_reports.overview;
     let totalClicks = 0;
     let totalReferrals = 0;
     let totalCustomers = 0;
@@ -1254,7 +1189,7 @@ export const calculateUserReportsTotals = async (): Promise<{
       totalEarnings += dayData.earnings || 0;
     });
     
-    console.log('✅ Calculated totals:', {
+    debugLog('✅ Calculated totals:', {
       clicks: totalClicks,
       referrals: totalReferrals,
       customers: totalCustomers,
@@ -1276,23 +1211,17 @@ export const calculateUserReportsTotals = async (): Promise<{
 // Database health check function
 export const testDatabaseConnection = async (): Promise<boolean> => {
   try {
-    console.log('Testing database connection...');
+    debugLog('Testing database connection...');
     
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Database health check timeout')), 3000);
-    });
-    
-    const queryPromise = supabase
-      .from('approved_users')
-      .select('count')
-      .limit(1);
+    const { data, error } = await withAbort(
+      supabase
+        .from('approved_users')
+        .select('user_id')
+        .limit(1),
+      3000
+    ) as any;
 
-    const { data, error } = await Promise.race([
-      queryPromise,
-      timeoutPromise
-    ]) as any;
-
-    console.log('Database health check result:', { data, error });
+    debugLog('Database health check result:', { data, error });
     
     if (error) {
       console.error('Database health check failed:', error);
@@ -1306,7 +1235,7 @@ export const testDatabaseConnection = async (): Promise<boolean> => {
       return false;
     }
     
-    console.log('Database connection successful');
+    debugLog('Database connection successful');
     return true;
   } catch (error) {
     console.error('Database health check error:', error);
@@ -1320,19 +1249,19 @@ export const testDatabaseConnection = async (): Promise<boolean> => {
 // Simple connection test to diagnose Supabase issues
 export const testSupabaseConnection = async (): Promise<{success: boolean, error?: string}> => {
   try {
-    console.log('Testing basic Supabase connection...');
+    debugLog('Testing basic Supabase connection...');
     
     // Test 1: Basic auth connection
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    console.log('Auth connection test:', { user: !!user, error: authError });
+    debugLog('Auth connection test:', { user: !!user, error: authError });
     
     // Test 2: Simple database query
     const { data, error } = await supabase
       .from('approved_users')
-      .select('count')
+      .select('user_id')
       .limit(1);
     
-    console.log('Database connection test:', { data, error });
+    debugLog('Database connection test:', { data, error });
     
     if (error) {
       return { success: false, error: error.message };
@@ -1348,15 +1277,15 @@ export const testSupabaseConnection = async (): Promise<{success: boolean, error
 // Simple table test to isolate the issue
 export const testSimpleTableQuery = async (): Promise<{success: boolean, error?: string}> => {
   try {
-    console.log('Testing simple table query...');
+    debugLog('Testing simple table query...');
     
     // Try a simple query on any table
     const { data, error } = await supabase
       .from('affiliate_profiles')
-      .select('count')
+      .select('id')
       .limit(1);
     
-    console.log('Simple table query result:', { data, error });
+    debugLog('Simple table query result:', { data, error });
     
     if (error) {
       return { success: false, error: error.message };
@@ -1374,11 +1303,11 @@ export const checkSupabaseConfig = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   
-  console.log('Supabase configuration check:');
-  console.log('URL exists:', !!url);
-  console.log('URL starts with https:', url?.startsWith('https://'));
-  console.log('Anon key exists:', !!anonKey);
-  console.log('Anon key length:', anonKey?.length);
+  debugLog('Supabase configuration check:');
+  debugLog('URL exists:', !!url);
+  debugLog('URL starts with https:', url?.startsWith('https://'));
+  debugLog('Anon key exists:', !!anonKey);
+  debugLog('Anon key length:', anonKey?.length);
   
   return {
     urlExists: !!url,
@@ -1391,30 +1320,24 @@ export const checkSupabaseConfig = () => {
 // Simple test to check database connectivity
 export const testSimpleQuery = async (): Promise<boolean> => {
   try {
-    console.log('Testing simple database query...');
+    debugLog('Testing simple database query...');
     
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Simple query timeout')), 2000);
-    });
-    
-    const queryPromise = supabase
-      .from('approved_users')
-      .select('count')
-      .limit(1);
+    const { data, error } = await withAbort(
+      supabase
+        .from('approved_users')
+        .select('user_id')
+        .limit(1),
+      2000
+    ) as any;
 
-    const { data, error } = await Promise.race([
-      queryPromise,
-      timeoutPromise
-    ]) as any;
-
-    console.log('Simple query result:', { data, error });
+    debugLog('Simple query result:', { data, error });
     
     if (error) {
       console.error('Simple query failed:', error);
       return false;
     }
     
-    console.log('Simple query successful');
+    debugLog('Simple query successful');
     return true;
   } catch (error) {
     console.error('Simple query error:', error);
@@ -1425,26 +1348,20 @@ export const testSimpleQuery = async (): Promise<boolean> => {
 // Test the exact query that's failing
 export const testExactQuery = async (userId: string): Promise<boolean> => {
   try {
-    console.log('Testing exact query for user ID:', userId);
+    debugLog('Testing exact query for user ID:', userId);
     
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Exact query timeout')), 2000);
-    });
+    debugLog('Starting exact query...');
+    const { data, error } = await withAbort(
+      supabase
+        .from('approved_users')
+        .select('user_id, status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single(),
+      2000
+    ) as any;
     
-    const queryPromise = supabase
-      .from('approved_users')
-      .select('user_id, status')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .single();
-
-    console.log('Starting exact query...');
-    const { data, error } = await Promise.race([
-      queryPromise,
-      timeoutPromise
-    ]) as any;
-    
-    console.log('Exact query result:', { data, error });
+    debugLog('Exact query result:', { data, error });
     
     if (error) {
       console.error('Exact query error:', error);
@@ -1452,10 +1369,294 @@ export const testExactQuery = async (userId: string): Promise<boolean> => {
     }
     
     const result = !!data;
-    console.log('Exact query final result:', result);
+    debugLog('Exact query final result:', result);
     return result;
   } catch (error) {
     console.error('Exact query error:', error);
+    return false;
+  }
+};
+
+// Database diagnostic function for profile updates
+export const diagnoseProfileUpdate = async (userId: string): Promise<{
+  success: boolean;
+  error?: string;
+  details?: any;
+}> => {
+  try {
+    debugLog('🔍 Starting profile update diagnosis for user:', userId);
+    
+    // Test 1: Basic database connection
+    debugLog('🔍 Test 1: Basic database connection...');
+    const { data: connectionTest, error: connectionError } = await supabase
+      .from('affiliate_profiles')
+      .select('id')
+      .limit(1);
+    
+    if (connectionError) {
+      console.error('❌ Database connection failed:', connectionError);
+      return {
+        success: false,
+        error: 'Database connection failed',
+        details: connectionError
+      };
+    }
+    
+    debugLog('✅ Database connection successful');
+    
+    // Test 2: Table structure
+    debugLog('🔍 Test 2: Table structure...');
+    const { data: structureTest, error: structureError } = await supabase
+      .from('affiliate_profiles')
+      .select('*')
+      .limit(1);
+    
+    if (structureError) {
+      console.error('❌ Table structure error:', structureError);
+      return {
+        success: false,
+        error: 'Table structure error',
+        details: structureError
+      };
+    }
+    
+    debugLog('✅ Table structure test successful');
+    debugLog('📋 Available columns:', structureTest ? Object.keys(structureTest[0] || {}) : 'No data');
+    
+    // Test 3: User authentication
+    debugLog('🔍 Test 3: User authentication...');
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      console.error('❌ User authentication failed:', authError);
+      return {
+        success: false,
+        error: 'User authentication failed',
+        details: authError
+      };
+    }
+    
+    debugLog('✅ User authentication successful:', user.email);
+    
+    // Test 4: Check if user profile exists
+    debugLog('🔍 Test 4: Check existing profile...');
+    const { data: existingProfile, error: profileError } = await supabase
+      .from('affiliate_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    
+    if (profileError && profileError.code !== 'PGRST116') {
+      console.error('❌ Profile check error:', profileError);
+      return {
+        success: false,
+        error: 'Profile check failed',
+        details: profileError
+      };
+    }
+    
+    debugLog('✅ Profile check successful');
+    debugLog('📋 Existing profile:', existingProfile ? 'Found' : 'Not found');
+    
+    // Test 5: Test insert operation
+    debugLog('🔍 Test 5: Test insert operation...');
+    const testProfileData = {
+      user_id: userId,
+      user_aryeo_id: userId,
+      user_email: user.email || '',
+      first_name: 'Test',
+      last_name: 'User',
+      avatar_url: '',
+      social_links: {},
+      notifications: {
+        email_reports: true,
+        sms_alerts: false,
+        push_notifications: true,
+      },
+    };
+    
+    const { data: insertTest, error: insertError } = await supabase
+      .from('affiliate_profiles')
+      .insert(testProfileData)
+      .select()
+      .single();
+    
+    if (insertError) {
+      console.error('❌ Insert test failed:', insertError);
+      return {
+        success: false,
+        error: 'Insert operation failed',
+        details: insertError
+      };
+    }
+    
+    debugLog('✅ Insert test successful');
+    
+    // Clean up test data
+    debugLog('🔍 Cleaning up test data...');
+    const { error: cleanupError } = await supabase
+      .from('affiliate_profiles')
+      .delete()
+      .eq('user_id', userId)
+      .eq('first_name', 'Test');
+    
+    if (cleanupError) {
+      console.warn('⚠️ Cleanup failed:', cleanupError);
+    } else {
+      debugLog('✅ Test data cleaned up');
+    }
+    
+    return {
+      success: true,
+      details: {
+        connectionTest,
+        structureTest,
+        user: user.email,
+        existingProfile: !!existingProfile,
+        insertTest
+      }
+    };
+    
+  } catch (error) {
+    console.error('💥 Diagnosis failed:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      details: error
+    };
+  }
+};
+
+// Check if required database tables exist
+export const checkDatabaseTables = async (): Promise<{
+  success: boolean;
+  missingTables?: string[];
+  error?: string;
+}> => {
+  try {
+    debugLog('🔍 Checking if required database tables exist...');
+    
+    const requiredTables = [
+      'affiliate_profiles',
+      'affiliate_referrers', 
+      'approved_users',
+      'dashboard_kpis',
+      'affiliate_assets',
+      'referral_events'
+    ];
+    
+    const missingTables: string[] = [];
+    
+    for (const tableName of requiredTables) {
+      try {
+        const { data, error } = await supabase
+          .from(tableName)
+          .select('*')
+          .limit(1);
+        
+        if (error) {
+          console.error(`❌ Table ${tableName} check failed:`, error);
+          missingTables.push(tableName);
+        } else {
+          debugLog(`✅ Table ${tableName} exists`);
+        }
+      } catch (error) {
+        console.error(`❌ Error checking table ${tableName}:`, error);
+        missingTables.push(tableName);
+      }
+    }
+    
+    if (missingTables.length > 0) {
+      console.error('❌ Missing tables:', missingTables);
+      return {
+        success: false,
+        missingTables,
+        error: `Missing required tables: ${missingTables.join(', ')}`
+      };
+    }
+    
+    debugLog('✅ All required tables exist');
+    return { success: true };
+    
+  } catch (error) {
+    console.error('💥 Error checking database tables:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+};
+
+// Session debugging utilities
+export const debugSession = () => {
+  try {
+    if (typeof window === 'undefined') {
+      return { hasAccessToken: false, hasRefreshToken: false, expiresIn: 0, isExpired: true };
+    }
+    // Check localStorage for tokens
+    const tokenKey = 'sb-' + process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/^https?:\/\//, '').replace(/\.supabase\.co.*/, '') + '-auth-token';
+    const storedToken = localStorage.getItem(tokenKey);
+    
+    if (storedToken) {
+      const tokenData = JSON.parse(storedToken);
+      debugLog('🔍 Session Debug Info:');
+      debugLog('Token Key:', tokenKey);
+      debugLog('Access Token:', tokenData.access_token ? 'Present' : 'Missing');
+      debugLog('Refresh Token:', tokenData.refresh_token ? 'Present' : 'Missing');
+      debugLog('Expires At:', new Date(tokenData.expires_at * 1000).toLocaleString());
+      debugLog('Token Type:', tokenData.token_type);
+      
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn = tokenData.expires_at - now;
+      debugLog('Expires In:', expiresIn > 0 ? `${expiresIn} seconds` : 'Expired');
+      
+      return {
+        hasAccessToken: !!tokenData.access_token,
+        hasRefreshToken: !!tokenData.refresh_token,
+        expiresIn,
+        isExpired: expiresIn <= 0
+      };
+    } else {
+      debugLog('❌ No session token found in localStorage');
+      return {
+        hasAccessToken: false,
+        hasRefreshToken: false,
+        expiresIn: 0,
+        isExpired: true
+      };
+    }
+  } catch (error) {
+    console.error('Error debugging session:', error);
+    return {
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      expiresIn: 0,
+      isExpired: true
+    };
+  }
+};
+
+// Force session refresh
+export const forceSessionRefresh = async () => {
+  try {
+    debugLog('🔄 Forcing session refresh...');
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error) {
+      console.error('Force refresh error:', error);
+      return false;
+    }
+    
+    if (session) {
+      debugLog('✅ Session refreshed successfully');
+      debugSession(); // Log the updated session info
+      return true;
+    } else {
+      debugLog('ℹ️ No active session to refresh');
+      return false;
+    }
+  } catch (error) {
+    console.error('Force refresh failed:', error);
     return false;
   }
 };

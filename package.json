@@ -9,7 +9,8 @@
     "lint": "eslint --fix",
     "test:db": "node scripts/test-database-integration.js",
     "test:signout": "node scripts/test-signout.js",
-    "diagnose:timeouts": "node scripts/diagnose-timeouts.js"
+    "diagnose:timeouts": "node scripts/diagnose-timeouts.js",
+    "test:connection": "node scripts/test-connection-management.js"
   },
   "dependencies": {
     "@heroui/button": "2.2.24",
@@ -51,7 +52,7 @@
     "@types/react-dom": "18.3.0",
     "@typescript-eslint/eslint-plugin": "8.34.1",
     "@typescript-eslint/parser": "8.34.1",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
     "eslint": "9.25.1",
     "eslint-config-next": "15.3.4",
     "eslint-config-prettier": "9.1.0",

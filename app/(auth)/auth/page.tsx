@@ -15,8 +15,6 @@ import { FcGoogle } from "react-icons/fc";
 import {
   signInWithEmail,
   resetPassword,
-  getUserCredentials,
-  clearUserCredentials,
 } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
 import { supabase } from "@/lib/supabase";
@@ -33,15 +31,8 @@ function AuthPageContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
 
-  // Load stored credentials on mount
-  useEffect(() => {
-    const storedCredentials = getUserCredentials();
-    if (storedCredentials) {
-      setEmail(storedCredentials.email);
-      setPassword(storedCredentials.password);
-      console.log("Loaded stored credentials for:", storedCredentials.email);
-    }
-  }, []);
+  // No longer loading stored credentials for security reasons
+  // Supabase handles session persistence securely
 
   useEffect(() => {
     if (error === "not-approved") {
@@ -80,9 +71,6 @@ function AuthPageContent() {
       
     } catch (error) {
       console.error("Sign in error:", error);
-      
-      // Clear stored credentials on sign-in failure
-      clearUserCredentials();
       
       addToast({
         title: "Sign In Failed",
@@ -136,16 +124,8 @@ function AuthPageContent() {
     setResetEmail(email); // Pre-fill with current email if available
   };
 
-  const handleClearCredentials = () => {
-    clearUserCredentials();
-    setEmail("");
-    setPassword("");
-    addToast({
-      title: "Credentials Cleared",
-      description: "Stored credentials have been cleared.",
-      color: "success",
-    });
-  };
+  // Removed credential clearing functionality for security reasons
+  // Supabase handles session management securely
 
   // Debug state values
   console.log("Auth page state:", { showEmailForm, showResetForm, loading });
@@ -207,17 +187,6 @@ function AuthPageContent() {
                   >
                     Forgot Password?
                   </Button>
-                  {getUserCredentials() && (
-                    <Button
-                      type="button"
-                      color="default"
-                      variant="light"
-                      className="flex-1"
-                      onPress={handleClearCredentials}
-                    >
-                      Clear Saved
-                    </Button>
-                  )}
                 </div>
               </div>
             ) : (

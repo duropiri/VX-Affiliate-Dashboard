@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     
     const today = new Date();
     // Convert to MDT timezone
-    const mdtToday = new Date(today.toLocaleString("en-US", {timeZone: "America/Denver"}));
+    const mdtToday = new Date(today.toLocaleString("en-US", {timeZone: "America/Edmonton"}));
     mdtToday.setHours(0, 0, 0, 0);
     
     for (const referrer of referrers) {
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
         }
         
         // Add today's entry if it doesn't exist
-        const todayKey = mdtToday.toLocaleDateString("en-CA", {timeZone: "America/Denver"}); // YYYY-MM-DD format
+        const todayKey = mdtToday.toLocaleDateString("en-CA", {timeZone: "America/Edmonton"}); // YYYY-MM-DD format
         
         if (!userReports.overview[todayKey]) {
           userReports.overview[todayKey] = {

@@ -26,6 +26,8 @@ import { User } from "@supabase/supabase-js";
 import { Settings } from "lucide-react";
 import { GrUserAdmin } from "react-icons/gr";
 import { addToast } from "@heroui/toast";
+import ConnectionStatus from "./connection-status";
+import { FaUser } from "react-icons/fa";
 
 export function Navbar() {
   const router = useRouter();
@@ -33,6 +35,7 @@ export function Navbar() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const connectionStatus = ConnectionStatus();
 
   useEffect(() => {
     const getUser = async () => {
@@ -168,25 +171,41 @@ export function Navbar() {
         <Dropdown placement="bottom-end">
           <DropdownTrigger>
             <div className="flex items-center">
-              {/* Mobile version */}
-              <Avatar
-                as="button"
-                src={user?.user_metadata?.avatar_url}
-                className="transition-transform flex md:hidden"
-                name={user?.user_metadata?.full_name || user?.email}
-                size="md"
-              />
-              {/* Desktop version */}
-              <HeroUser
-                as="button"
-                avatarProps={{
-                  isBordered: false,
-                  src: user?.user_metadata?.avatar_url,
-                }}
-                className="transition-transform hidden md:flex"
-                description={user?.email}
-                name={user?.user_metadata?.full_name || user?.email}
-              />
+              {/* Mobile version with connection status */}
+              <div className="relative">
+                <Avatar
+                  as="button"
+                  src={user?.user_metadata?.avatar_url}
+                  className="transition-transform flex md:hidden"
+                  name={user?.user_metadata?.full_name || user?.email}
+                  size="md"
+                  radius="sm"
+                  isBordered={connectionStatus.isBordered}
+                  color={connectionStatus.color}
+                  onClick={connectionStatus.onClick}
+                  title={connectionStatus.title}
+                />
+              </div>
+              {/* Desktop version with connection status */}
+              <div className="relative hidden md:block">
+                <HeroUser
+                  as="button"
+                  avatarProps={{
+                    isBordered: connectionStatus.isBordered,
+                    color: connectionStatus.color,
+                    src: user?.user_metadata?.avatar_url,
+                    showFallback: false,
+                    fallback: <FaUser className="size-5" />,
+                    radius: "sm", 
+                    className: "mr-2",
+                  }}
+                  className="transition-transform"
+                  description={user?.email}
+                  name={user?.user_metadata?.full_name || user?.email}
+                  onClick={connectionStatus.onClick}
+                  title={connectionStatus.title}
+                />
+              </div>
             </div>
           </DropdownTrigger>
 

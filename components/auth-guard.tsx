@@ -10,8 +10,6 @@ import {
   getUserProfile,
   isUserApproved,
   handlePostAuth,
-  getUserCredentials,
-  clearUserCredentials,
 } from "@/lib/auth";
 import { addToast, Spinner } from "@heroui/react";
 
@@ -58,6 +56,12 @@ export function AuthGuard({ children }: AuthGuardProps) {
           return;
         }
 
+        // If user is already set and approved, and we're on a dashboard page, skip the check
+        if (user && approved && window.location.pathname.startsWith('/home')) {
+          console.log("User already authenticated and on dashboard, skipping approval check");
+          return;
+        }
+
         // Check if user is approved with enhanced error handling
         console.log("Checking user approval for:", user.email, "ID:", user.id);
 
@@ -100,7 +104,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
           console.log("❌ User not approved, redirecting to auth");
           setUser(null);
           setLoading(false);
-          clearUserCredentials(); // Clear stored credentials
           router.push("/auth");
           addToast({
             title: "Access Denied",
@@ -137,13 +140,12 @@ export function AuthGuard({ children }: AuthGuardProps) {
         }, 1000); // Delay profile creation to not block rendering
       } catch (error) {
         console.error("Error checking user:", error);
-        clearUserCredentials(); // Clear stored credentials on error
         router.push("/auth");
       }
     };
 
     checkUser();
-  }, [router]);
+  }, [router, approved]);
 
   // Listen for auth state changes
   useEffect(() => {
@@ -152,6 +154,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log("Auth state change:", event, session?.user?.email);
 
+      // Only handle specific auth events, not all state changes
       if (event === "SIGNED_IN" && session?.user) {
         console.log(
           "Auth state change - checking user approval for:",
@@ -159,6 +162,12 @@ export function AuthGuard({ children }: AuthGuardProps) {
           "ID:",
           session.user.id
         );
+
+        // Don't redirect if we're already on a dashboard page and user is approved
+        if (user && approved && window.location.pathname.startsWith('/home')) {
+          console.log("User already approved and on dashboard, skipping redirect");
+          return;
+        }
 
         try {
           // Handle post-auth processing
@@ -179,15 +188,16 @@ export function AuthGuard({ children }: AuthGuardProps) {
             console.log(
               "✅ User is approved from auth state change, proceeding to dashboard"
             );
-            // Force a router push to ensure navigation
-            router.push("/home");
+            // Only redirect if not already on dashboard
+            if (!window.location.pathname.startsWith('/home')) {
+              router.push("/home");
+            }
           } else {
             console.log(
               "❌ User not approved from auth state change, redirecting to auth"
             );
             setUser(null);
             setLoading(false);
-            clearUserCredentials(); // Clear stored credentials
             router.push("/auth");
             addToast({
               title: "Access Denied",
@@ -239,7 +249,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
                 setApproved(true);
                 setLoading(false);
                 console.log("✅ User approved by email cross-reference");
-                router.push("/home");
+                // Only redirect if not already on dashboard
+                if (!window.location.pathname.startsWith('/home')) {
+                  router.push("/home");
+                }
                 return;
               }
             } catch (emailError) {
@@ -255,7 +268,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
           );
           setUser(null);
           setLoading(false);
-          clearUserCredentials(); // Clear stored credentials
           router.push("/auth");
           addToast({
             title: "Access Denied",
@@ -268,13 +280,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
         setUser(null);
         setApproved(false);
         setLoading(false);
-        clearUserCredentials(); // Clear stored credentials
         router.push("/auth");
       }
+      // Don't handle other auth events like TOKEN_REFRESHED to prevent unnecessary redirects
     });
 
     return () => subscription.unsubscribe();
-  }, [router]);
+  }, [router, user, approved]);
 
   console.log(
     "AuthGuard render - loading:",

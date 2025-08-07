@@ -1,26 +1,346 @@
 import { createBrowserClient } from '@supabase/ssr';
 
-// Enhanced Supabase client with default configuration for SSR
+// Debug flag for verbose logging
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+// Debug logging helper
+const debugLog = (message: string, ...args: any[]) => {
+  if (DEBUG_MODE) {
+    console.log(message, ...args);
+  }
+};
+
+// Enhanced Supabase client with proper session persistence and auto-refresh
 export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    cookies: {
+      // Required for SSR client - check if we're in browser environment
+      get(name: string) {
+        if (typeof document === 'undefined') {
+          return undefined;
+        }
+        return document.cookie
+          .split('; ')
+          .find((row) => row.startsWith(`${name}=`))
+          ?.split('=')[1];
+      },
+      set(name: string, value: string, options: any) {
+        if (typeof document === 'undefined') {
+          return;
+        }
+        document.cookie = `${name}=${value}; path=/; max-age=${options?.maxAge || 31536000}`;
+      },
+      remove(name: string, options: any) {
+        if (typeof document === 'undefined') {
+          return;
+        }
+        document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      },
+    },
+    auth: {
+      // Store session in localStorage to persist across reloads
+      persistSession: true,
+      // Silently refresh access_token every 10 minutes
+      autoRefreshToken: true,
+      // Disable URL detection since we handle callbacks manually
+      detectSessionInUrl: false,
+    },
+    global: {
+      headers: {
+        'X-Client-Info': 'vx-affiliate-portal'
+      }
+    }
+  }
 );
 
-// Production-optimized query helper with enhanced error handling and longer timeouts
-export const optimizedQuery = async (queryFn: () => Promise<any>, timeoutMs: number = 15000) => {
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Query timeout')), timeoutMs);
-  });
+// Connection state management
+interface ConnectionState {
+  isHealthy: boolean;
+  lastCheck: number;
+  consecutiveFailures: number;
+  latency: number;
+  isRecovering: boolean;
+}
 
-  try {
-    console.log(`🔄 Executing query with ${timeoutMs}ms timeout...`);
-    const result = await Promise.race([queryFn(), timeoutPromise]);
-    console.log('✅ Query executed successfully');
-    return result;
-  } catch (error) {
-    console.error('❌ Optimized query failed:', error);
-    throw error;
+class ConnectionManager {
+  private static instance: ConnectionManager;
+  private state: ConnectionState = {
+    isHealthy: true,
+    lastCheck: 0,
+    consecutiveFailures: 0,
+    latency: 0,
+    isRecovering: false
+  };
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private sessionCache = new Map<string, { data: any; timestamp: number; ttl: number }>();
+  private recoveryTimeout: NodeJS.Timeout | null = null;
+  private isShuttingDown = false;
+
+  private constructor() {
+    // Only start health monitoring in browser environment
+    if (typeof window !== 'undefined') {
+      this.startHealthMonitoring();
+      // Clean up on page unload
+      window.addEventListener('beforeunload', () => {
+        this.cleanup();
+      });
+    }
   }
+
+  static getInstance(): ConnectionManager {
+    if (!ConnectionManager.instance) {
+      ConnectionManager.instance = new ConnectionManager();
+    }
+    return ConnectionManager.instance;
+  }
+
+  private async performHealthCheck(): Promise<void> {
+    if (this.isShuttingDown || typeof window === 'undefined') return;
+    
+    try {
+      const startTime = Date.now();
+      const { data, error } = await supabase
+        .from('approved_users')
+        .select('count')
+        .limit(1);
+      
+      const latency = Date.now() - startTime;
+      
+      if (error) {
+        this.state.consecutiveFailures++;
+        this.state.isHealthy = false;
+        console.warn(`⚠️ Database health check failed (attempt ${this.state.consecutiveFailures}):`, error);
+        
+        // Start recovery process if we have too many failures
+        if (this.state.consecutiveFailures >= 3 && !this.state.isRecovering) {
+          this.startRecovery();
+        }
+      } else {
+        this.state.consecutiveFailures = 0;
+        this.state.isHealthy = true;
+        this.state.latency = latency;
+        this.state.isRecovering = false;
+        debugLog(`✅ Database healthy (${latency}ms latency)`);
+      }
+      
+      this.state.lastCheck = Date.now();
+    } catch (error) {
+      this.state.consecutiveFailures++;
+      this.state.isHealthy = false;
+      console.error('❌ Database health check error:', error);
+      this.state.lastCheck = Date.now();
+      
+      // Start recovery process
+      if (this.state.consecutiveFailures >= 3 && !this.state.isRecovering) {
+        this.startRecovery();
+      }
+    }
+  }
+
+  private startRecovery(): void {
+    if (this.state.isRecovering || typeof window === 'undefined') return;
+    
+    debugLog('🔄 Starting connection recovery...');
+    this.state.isRecovering = true;
+    
+    // Clear cache to force fresh data
+    this.clearCache();
+    
+    // Try to reconnect after a delay
+    this.recoveryTimeout = setTimeout(async () => {
+      if (this.isShuttingDown || typeof window === 'undefined') return;
+      
+      debugLog('🔄 Attempting connection recovery...');
+      await this.performHealthCheck();
+      
+      if (this.state.isHealthy) {
+        debugLog('✅ Connection recovered successfully');
+      } else {
+        console.warn('⚠️ Connection recovery failed, will retry...');
+        // Schedule another recovery attempt
+        setTimeout(() => {
+          if (!this.isShuttingDown && typeof window !== 'undefined') {
+            this.startRecovery();
+          }
+        }, 10000); // 10 seconds
+      }
+    }, 5000); // 5 second delay before recovery attempt
+  }
+
+  startHealthMonitoring(): void {
+    // Only start monitoring in browser environment
+    if (typeof window === 'undefined') return;
+    
+    // Perform initial health check
+    this.performHealthCheck();
+    
+    // Set up periodic health checks every 60 seconds (reduced frequency)
+    this.healthCheckInterval = setInterval(() => {
+      if (!this.isShuttingDown && typeof window !== 'undefined') {
+        this.performHealthCheck();
+      }
+    }, 60000); // Increased to 60 seconds to reduce load
+  }
+
+  cleanup(): void {
+    debugLog('🧹 Cleaning up connection manager...');
+    this.isShuttingDown = true;
+    
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+    
+    if (this.recoveryTimeout) {
+      clearTimeout(this.recoveryTimeout);
+      this.recoveryTimeout = null;
+    }
+    
+    this.clearCache();
+  }
+
+  stopHealthMonitoring(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+  }
+
+  isConnectionHealthy(): boolean {
+    // Return true during SSR to avoid blocking
+    if (typeof window === 'undefined') return true;
+    
+    // Consider unhealthy if we've had 3+ consecutive failures or last check was more than 5 minutes ago
+    const timeSinceLastCheck = Date.now() - this.state.lastCheck;
+    return this.state.isHealthy && 
+           this.state.consecutiveFailures < 3 && 
+           timeSinceLastCheck < 300000; // Increased to 5 minutes
+  }
+
+  getConnectionLatency(): number {
+    return this.state.latency;
+  }
+
+  // Session-based caching with automatic cleanup
+  setCache(key: string, data: any, ttl: number = 300000): void { // 5 minutes default TTL
+    // Clean expired cache entries first
+    this.clearExpiredCache();
+    
+    this.sessionCache.set(key, {
+      data,
+      timestamp: Date.now(),
+      ttl
+    });
+  }
+
+  getCache(key: string): any | null {
+    const cached = this.sessionCache.get(key);
+    if (!cached) return null;
+    
+    const isExpired = Date.now() - cached.timestamp > cached.ttl;
+    if (isExpired) {
+      this.sessionCache.delete(key);
+      return null;
+    }
+    
+    return cached.data;
+  }
+
+  clearCache(): void {
+    this.sessionCache.clear();
+  }
+
+  clearExpiredCache(): void {
+    const now = Date.now();
+    const entries = Array.from(this.sessionCache.entries());
+    for (const [key, cached] of entries) {
+      if (now - cached.timestamp > cached.ttl) {
+        this.sessionCache.delete(key);
+      }
+    }
+  }
+}
+
+// Global connection manager instance
+const connectionManager = ConnectionManager.getInstance();
+
+// Enhanced query with connection health checks and caching
+export const optimizedQuery = async (
+  queryFn: () => Promise<any>, 
+  timeoutMs: number = 30000, // Increased to 30 seconds default
+  options: {
+    useCache?: boolean;
+    cacheKey?: string;
+    cacheTTL?: number;
+    skipHealthCheck?: boolean;
+    maxRetries?: number;
+  } = {}
+): Promise<any> => {
+  const { 
+    useCache = false, 
+    cacheKey, 
+    cacheTTL = 300000, 
+    skipHealthCheck = false,
+    maxRetries = 2
+  } = options;
+
+  // Skip caching and health checks during SSR
+  if (typeof window === 'undefined') {
+    return await queryFn();
+  }
+
+  // Check cache first if enabled
+  if (useCache && cacheKey) {
+    const cached = connectionManager.getCache(cacheKey);
+    if (cached) {
+      debugLog('📋 Returning cached result');
+      return cached;
+    }
+  }
+
+  // Check connection health unless skipped
+  if (!skipHealthCheck && !connectionManager.isConnectionHealthy()) {
+    console.warn('⚠️ Database connection unhealthy, attempting query anyway...');
+  }
+
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      debugLog(`🔄 Executing query (attempt ${attempt}/${maxRetries + 1}) with ${timeoutMs}ms timeout...`);
+      
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Query timeout after ${timeoutMs}ms`)), timeoutMs);
+      });
+
+      const startTime = Date.now();
+      const result = await Promise.race([queryFn(), timeoutPromise]);
+      const duration = Date.now() - startTime;
+      
+      debugLog(`✅ Query executed successfully (${duration}ms)`);
+      
+      // Cache result if enabled
+      if (useCache && cacheKey) {
+        connectionManager.setCache(cacheKey, result, cacheTTL);
+      }
+      
+      return result;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`❌ Query attempt ${attempt} failed:`, lastError);
+      
+      if (attempt <= maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Exponential backoff, max 10s
+        debugLog(`⏳ Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  console.error(`❌ All ${maxRetries + 1} query attempts failed`);
+  throw lastError || new Error('Query failed after all retries');
 };
 
 // Enhanced database health check with better error handling
@@ -30,7 +350,7 @@ export const checkDatabaseHealth = async (): Promise<{
   details?: any;
 }> => {
   try {
-    console.log('🔍 Checking database health...');
+    debugLog('🔍 Checking database health...');
     
     const startTime = Date.now();
     const { data, error } = await supabase
@@ -54,7 +374,7 @@ export const checkDatabaseHealth = async (): Promise<{
       };
     }
     
-    console.log(`✅ Database health check passed (${responseTime}ms)`);
+    debugLog(`✅ Database health check passed (${responseTime}ms)`);
     return {
       healthy: true,
       details: { responseTime }
@@ -108,13 +428,13 @@ export const monitorDatabaseConnection = async (): Promise<{
 export const retryDatabaseOperation = async <T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
-  baseDelay: number = 2000
+  baseDelay: number = 3000 // Increased to 3 seconds base delay
 ): Promise<T> => {
   let lastError: Error;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`🔄 Database operation attempt ${attempt}/${maxRetries}`);
+      debugLog(`🔄 Database operation attempt ${attempt}/${maxRetries}`);
       return await operation();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -122,7 +442,7 @@ export const retryDatabaseOperation = async <T>(
       
       if (attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt - 1);
-        console.log(`⏳ Retrying in ${delay}ms...`);
+        debugLog(`⏳ Retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -138,17 +458,46 @@ export const robustQuery = async <T>(
     maxRetries?: number;
     baseDelay?: number;
     timeout?: number;
+    useCache?: boolean;
+    cacheKey?: string;
+    cacheTTL?: number;
   } = {}
 ): Promise<T> => {
-  const { maxRetries = 3, baseDelay = 2000, timeout = 20000 } = options;
+  const { 
+    maxRetries = 3, 
+    baseDelay = 3000, 
+    timeout = 30000, // Increased to 30 seconds
+    useCache = false,
+    cacheKey,
+    cacheTTL = 300000
+  } = options;
   
   return retryDatabaseOperation(async () => {
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Query timeout')), timeout);
     });
     
-    return Promise.race([queryFn(), timeoutPromise]) as Promise<T>;
+    const result = await Promise.race([queryFn(), timeoutPromise]) as Promise<T>;
+    
+    // Cache result if enabled
+    if (useCache && cacheKey) {
+      connectionManager.setCache(cacheKey, result, cacheTTL);
+    }
+    
+    return result;
   }, maxRetries, baseDelay);
+};
+
+// Abortable timeout wrapper for Supabase queries (cancels the underlying request)
+export const withAbort = async <T>(query: any, timeoutMs: number = 3000): Promise<T> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  try {
+    const runner = query.abortSignal?.(controller.signal) ?? query;
+    return await runner;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 // Database connection status monitoring with enhanced error handling
@@ -171,7 +520,7 @@ export class DatabaseMonitor {
       this.stopMonitoring();
     }
     
-    console.log('🔍 Starting database monitoring...');
+    debugLog('🔍 Starting database monitoring...');
     
     // Initial health check
     await this.performHealthCheck();
@@ -186,7 +535,7 @@ export class DatabaseMonitor {
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
       this.healthCheckInterval = null;
-      console.log('🛑 Stopped database monitoring');
+      debugLog('🛑 Stopped database monitoring');
     }
   }
   
@@ -201,7 +550,7 @@ export class DatabaseMonitor {
       if (!health.healthy) {
         console.warn('⚠️ Database health check failed:', health.error);
       } else {
-        console.log('✅ Database health check passed');
+        debugLog('✅ Database health check passed');
       }
     } catch (error) {
       console.error('❌ Database health check error:', error);
@@ -220,6 +569,9 @@ export class DatabaseMonitor {
     return this.lastHealthCheck?.healthy ?? false;
   }
 }
+
+// Export connection manager for use in other modules
+export { connectionManager };
 
 // Types for our database
 export interface DashboardKPIs {
@@ -269,3 +621,36 @@ export interface AffiliateReferrer {
   user_id: string;
   code: string;
 }
+
+// Reset connection manager (useful for troubleshooting)
+export const resetConnectionManager = (): void => {
+  debugLog('🔄 Resetting connection manager...');
+  
+  // Stop current monitoring
+  connectionManager.stopHealthMonitoring();
+  
+  // Clear all caches
+  connectionManager.clearCache();
+  
+  // Restart monitoring
+  connectionManager.startHealthMonitoring();
+  
+  debugLog('✅ Connection manager reset complete');
+};
+
+// Get connection statistics for debugging
+export const getConnectionStats = (): {
+  isHealthy: boolean;
+  latency: number;
+  lastCheck: number;
+  consecutiveFailures: number;
+  cacheSize: number;
+} => {
+  return {
+    isHealthy: connectionManager.isConnectionHealthy(),
+    latency: connectionManager.getConnectionLatency(),
+    lastCheck: Date.now(),
+    consecutiveFailures: 0, // This would need to be exposed from the manager
+    cacheSize: 0 // This would need to be exposed from the manager
+  };
+};

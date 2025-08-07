@@ -67,7 +67,7 @@ export default function SetupPage() {
           .from('approved_users')
           .insert({
             user_id: authData.user.id,
-            user_email: email,
+            user_email: email.toLowerCase(),
             approved_by: authData.user.id, // Self-approval for first admin
             status: 'active',
             notes: 'First admin user - created during setup',
@@ -88,7 +88,7 @@ export default function SetupPage() {
           .insert({
             user_id: authData.user.id,
             user_aryeo_id: authData.user.id,
-            user_email: email,
+            user_email: email.toLowerCase(),
             first_name: firstName,
             last_name: lastName,
             notifications: {

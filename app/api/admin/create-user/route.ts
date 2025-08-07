@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
         .from('approved_users')
         .insert({
           user_id: userId,
-          user_email: email,
+          user_email: email.toLowerCase(),
           approved_by: 'admin', // You can change this to the actual admin user ID
           status: 'active',
           notes: 'Created via admin interface',
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
         .insert({
           user_id: userId,
           user_aryeo_id: userId, // Using user ID as aryeo_id for now
-          user_email: email,
+          user_email: email.toLowerCase(),
           first_name: firstName,
           last_name: lastName,
           avatar_url: userData?.avatar_url || userData?.picture,
