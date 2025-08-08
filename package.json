@@ -26,6 +26,7 @@
     "@heroui/system": "2.4.20",
     "@heroui/theme": "2.4.20",
     "@heroui/toast": "^2.0.14",
+    "@microsoft/clarity": "^1.0.0",
     "@react-aria/ssr": "3.9.10",
     "@react-aria/visually-hidden": "3.8.26",
     "@supabase/ssr": "^0.1.0",

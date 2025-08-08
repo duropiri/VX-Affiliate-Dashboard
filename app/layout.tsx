@@ -7,6 +7,9 @@ import { Providers } from "./providers";
 import { siteConfig } from "@/config/site";
 import { fontSans } from "@/config/fonts";
 
+import Clarity from "@microsoft/clarity";
+const projectId = process.env.CLARITY_PROJECT_ID;
+
 export const metadata: Metadata = {
   title: {
     default: siteConfig.name,
@@ -30,13 +33,17 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  if (projectId) {
+    Clarity.init(projectId);
+  }
+
   return (
     <html suppressHydrationWarning lang="en">
       <head />
       <body
         className={clsx(
           "min-h-screen text-foreground bg-background font-sans antialiased",
-          fontSans.variable,
+          fontSans.variable
         )}
       >
         <Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
