@@ -10,6 +10,7 @@ import {
   Textarea,
   Divider,
   Link,
+  Form,
 } from "@heroui/react";
 import { createUserWithPassword } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
@@ -137,7 +138,7 @@ export default function AdminPage() {
           </CardHeader>
 
           <CardBody>
-            <form onSubmit={handleCreateUser} className="space-y-4">
+            <Form onSubmit={handleCreateUser} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <Input
                   label="First Name"
@@ -208,7 +209,7 @@ export default function AdminPage() {
               >
                 Test Database Connection
               </Button>
-            </form>
+            </Form>
           </CardBody>
         </Card>
 

@@ -10,6 +10,7 @@ import {
   Input,
   Image as HeroImage,
   Link,
+  Form,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
 import {
@@ -133,7 +134,7 @@ function AuthPageContent() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/10 to-white flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center justify-center pb-2">
+        <CardHeader className="text-center justify-center pb-2 mb-4">
           <div className="flex flex-col items-center gap-2">
             <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
               <HeroImage
@@ -153,7 +154,7 @@ function AuthPageContent() {
         <CardBody className="pt-0">
           <div className="space-y-4">
             {showEmailForm ? (
-              <div className="space-y-4">
+              <Form onSubmit={handleEmailSignIn} className="space-y-2">
                 <Input
                   type="email"
                   label="Email"
@@ -169,6 +170,7 @@ function AuthPageContent() {
                   isRequired
                 />
                 <Button
+                  type="submit"
                   color="primary"
                   className="w-full"
                   onPress={handleEmailSignIn}
@@ -177,7 +179,7 @@ function AuthPageContent() {
                   Sign In
                 </Button>
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 w-full">
                   <Button
                     type="button"
                     color="default"
@@ -188,9 +190,9 @@ function AuthPageContent() {
                     Forgot Password?
                   </Button>
                 </div>
-              </div>
+              </Form>
             ) : (
-              <form onSubmit={handlePasswordReset} className="space-y-4">
+              <Form onSubmit={handlePasswordReset} className="space-y-4">
                 <Input
                   type="email"
                   label="Email Address"
@@ -224,7 +226,7 @@ function AuthPageContent() {
                 >
                   Back to Sign In
                 </Button>
-              </form>
+              </Form>
             )}
 
             <div className="text-center space-y-2">

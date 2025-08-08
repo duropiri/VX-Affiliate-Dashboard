@@ -9,6 +9,7 @@ import {
   Button,
   Input,
   Image as HeroImage,
+  Form,
 } from "@heroui/react";
 import { supabase } from "@/lib/supabase";
 import { signOut } from "@/lib/auth";
@@ -226,7 +227,7 @@ function ResetPasswordContent() {
         </CardHeader>
 
         <CardBody className="pt-0">
-          <form onSubmit={handlePasswordReset} className="space-y-4">
+          <Form onSubmit={handlePasswordReset} className="space-y-4">
             <Input
               type="password"
               label="New Password"
@@ -271,7 +272,7 @@ function ResetPasswordContent() {
             >
               Back to Sign In
             </Button>
-          </form>
+          </Form>
         </CardBody>
       </Card>
     </div>

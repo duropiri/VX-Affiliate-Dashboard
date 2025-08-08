@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Card, CardBody, CardHeader, Button, Input } from '@heroui/react';
+import { Card, CardBody, CardHeader, Button, Input, Form } from '@heroui/react';
 import { supabase } from '@/lib/supabase';
 import { addToast } from '@heroui/toast';
 
@@ -179,7 +179,7 @@ export default function SetupPage() {
         </CardHeader>
         
         <CardBody className="pt-0">
-          <form onSubmit={handleCreateFirstAdmin} className="space-y-4">
+          <Form onSubmit={handleCreateFirstAdmin} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <Input
                 label="First Name"
@@ -232,7 +232,7 @@ export default function SetupPage() {
               This will create the first admin user with full access to the system.
               Only run this once during initial setup.
             </p>
-          </form>
+          </Form>
         </CardBody>
       </Card>
     </div>
