@@ -11,8 +11,9 @@ import {
   Switch,
   Divider,
   Spinner,
+  Form,
 } from "@heroui/react";
-import { Settings, User, Bell, Upload, Bug } from "lucide-react";
+import { Settings, User, Bell, Upload, Bug, Lock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addToast } from "@heroui/toast";
 import { diagnoseProfileUpdate, checkDatabaseTables, debugSession, forceSessionRefresh } from "@/lib/auth";
@@ -34,6 +35,12 @@ export default function SettingsPage() {
       pushNotifications: true,
     },
   });
+
+  // Password update state
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [updatingPassword, setUpdatingPassword] = useState(false);
 
   useEffect(() => {
     console.log("🚀 SettingsPage useEffect triggered");
@@ -398,6 +405,63 @@ export default function SettingsPage() {
     }
   };
 
+  const handleUpdatePassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    try {
+      if (!currentPassword) {
+        addToast({ title: "Enter your current password", color: "warning" });
+        return;
+      }
+      if (newPassword.length < 6) {
+        addToast({ title: "New password too short", description: "Minimum 6 characters", color: "warning" });
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        addToast({ title: "Passwords do not match", color: "danger" });
+        return;
+      }
+
+      setUpdatingPassword(true);
+
+      const { data: { user }, error: getUserError } = await supabase.auth.getUser();
+      if (getUserError) {
+        addToast({ title: "Session error", description: getUserError.message, color: "danger" });
+        return;
+      }
+      if (!user || !user.email) {
+        addToast({ title: "No authenticated user", color: "danger" });
+        return;
+      }
+
+      // Verify current password by re-authenticating
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPassword,
+      });
+      if (signInError) {
+        addToast({ title: "Current password incorrect", color: "danger" });
+        return;
+      }
+
+      // Update to the new password
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) {
+        addToast({ title: "Failed to update password", description: updateError.message, color: "danger" });
+        return;
+      }
+
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+
+      addToast({ title: "Password updated", description: "Your password has been changed.", color: "success" });
+    } catch (error) {
+      addToast({ title: "Unexpected error", description: error instanceof Error ? error.message : "Unknown error", color: "danger" });
+    } finally {
+      setUpdatingPassword(false);
+    }
+  };
+
   const handleDebugSession = () => {
     console.log("🔍 Debugging session...");
     const sessionInfo = typeof window !== 'undefined' ? debugSession() : { hasAccessToken: false, hasRefreshToken: false, expiresIn: 0, isExpired: true } as any;
@@ -692,6 +756,48 @@ export default function SettingsPage() {
               >
                 Save Preferences
               </Button>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Lock size={20} />
+                Change Password
+              </h3>
+            </CardHeader>
+            <CardBody>
+              <Form onSubmit={handleUpdatePassword} className="space-y-4">
+                <Input
+                  type="password"
+                  label="Current Password"
+                  value={currentPassword}
+                  onValueChange={setCurrentPassword}
+                  isRequired
+                  variant="bordered"
+                />
+                <Input
+                  type="password"
+                  label="New Password"
+                  value={newPassword}
+                  onValueChange={setNewPassword}
+                  isRequired
+                  minLength={6}
+                  variant="bordered"
+                />
+                <Input
+                  type="password"
+                  label="Confirm New Password"
+                  value={confirmPassword}
+                  onValueChange={setConfirmPassword}
+                  isRequired
+                  minLength={6}
+                  variant="bordered"
+                />
+                <Button type="submit" color="primary" className="w-full" isLoading={updatingPassword}>
+                  Update Password
+                </Button>
+              </Form>
             </CardBody>
           </Card>
         </div>
