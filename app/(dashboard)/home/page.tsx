@@ -1,19 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { ReferralCard } from "@/components/referral-card";
 import { StatsBar } from "@/components/stats-bar";
 import { Card, CardBody, CardHeader, Link, Spinner, Button } from "@heroui/react";
 import { CheckCircle, Circle, AlertCircle, RefreshCw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import {
-  getUserProfile,
-  getReferralCode,
-  calculateUserReportsTotals,
-} from "@/lib/auth";
+import { getUserProfile, getReferralCode, calculateUserReportsTotals, getUserReports, getUser } from "@/lib/auth";
+import { subscribeToUserKpis } from "@/lib/realtime";
 import { addToast } from "@heroui/toast";
 
 export default function HomePage() {
+  const pathname = usePathname();
   const [referralCode, setReferralCode] = useState<string>("");
   const [kpis, setKpis] = useState({
     clicks: 0,
@@ -31,7 +30,7 @@ export default function HomePage() {
     setError(null);
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (force: boolean = false) => {
     try {
       console.log("🔄 Loading dashboard data...");
       setLoading(true);
@@ -54,7 +53,7 @@ export default function HomePage() {
 
       const [referralCodeResult, kpiResult] = await Promise.allSettled([
         getReferralCode(user.id),
-        calculateUserReportsTotals(),
+        calculateUserReportsTotals({ force }),
       ]);
 
       console.log("📈 Query results:", { referralCodeResult, kpiResult });
@@ -99,12 +98,60 @@ export default function HomePage() {
 
   useEffect(() => {
     console.log("🚀 Starting loadData function");
-    loadData();
+    loadData(true);
+  }, []);
+
+  // Option B: re-fetch on navigation/focus/online, bypassing cache
+  useEffect(() => {
+    const revalidate = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        // Force-refresh key dashboard data derived from user_reports
+        await getUserReports("Last 30 Days", { force: true } as any);
+        // Then reload the lightweight aggregates displayed here
+        await loadData(true);
+      } catch (e) {
+        console.warn("Revalidate failed", e);
+      }
+    };
+
+    // Route change revalidate (app router: usePathname changes)
+    revalidate();
+
+    const onVisibility = () => {
+      if (!document.hidden) revalidate();
+    };
+    const onOnline = () => revalidate();
+
+    window.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [pathname]);
+
+  // Realtime subscription for dashboard KPIs
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    (async () => {
+      const user = await getUser();
+      if (!user) return;
+      // Initial forced refresh
+      await getUserReports("Last 30 Days", { force: true } as any);
+      await loadData(true);
+      unsub = subscribeToUserKpis(user.id, async () => {
+        await getUserReports("Last 30 Days", { force: true } as any);
+        await loadData(true);
+      });
+    })();
+    return () => { unsub?.(); };
   }, []);
 
   const handleRetry = async () => {
     setRetrying(true);
-    await loadData();
+    await loadData(true);
     setRetrying(false);
   };
 
@@ -177,12 +224,12 @@ export default function HomePage() {
               <span className="text-nowrap">
                 -{" "}
                 <Link
-                  href="https://affiliate.virtualxposure.com/pages/leaderboard"
+                  href="https://try.virtualxposure.com/pages/affiliate/leaderboard"
                   underline="hover"
-                  color="primary"
+                  color="primary" 
                   className="text-wrap"
                 >
-                  https://affiliate.virtualxposure.com/pages/leaderboard
+                  https://try.virtualxposure.com/pages/affiliate/leaderboard
                 </Link>
               </span>
               <br />

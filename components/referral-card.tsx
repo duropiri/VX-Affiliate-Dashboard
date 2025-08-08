@@ -1,18 +1,27 @@
 "use client";
 
-import { useState } from "react";
-import { Card, CardBody, Button, Link as HeroUILink } from "@heroui/react";
+import { useEffect, useState } from "react";
+import { Card, CardBody, Button, Link as HeroUILink, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Input } from "@heroui/react";
 import { Copy, ExternalLink } from "lucide-react";
 import { addToast } from "@heroui/toast";
 import { FiLink } from "react-icons/fi";
 import { FaFacebookF, FaTwitter } from "react-icons/fa";
+import { updateReferralCodeForCurrentUser } from "@/lib/auth";
 
 interface ReferralCardProps {
   referralCode: string;
 }
 
 export function ReferralCard({ referralCode }: ReferralCardProps) {
-  const referralUrl = `https://affiliate.virtualxposure.com/pages/order?ref=${referralCode}`;
+  const referralUrl = `https://try.virtualxposure.com/pages/order?ref=${referralCode}`;
+  const [isOpen, setIsOpen] = useState(false);
+  const [token, setToken] = useState(referralCode || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setToken(referralCode || "");
+  }, [referralCode]);
 
   const copyToClipboard = async () => {
     try {
@@ -100,7 +109,52 @@ export function ReferralCard({ referralCode }: ReferralCardProps) {
             </Button>
           </div>
         </div>
+
+        <div className="flex items-center justify-between mt-2">
+          <div />
+          <Button size="sm" variant="bordered" onPress={() => setIsOpen(true)}>
+            Customize Token
+          </Button>
+        </div>
       </CardBody>
+
+      <Modal isOpen={isOpen} onOpenChange={setIsOpen}>
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader className="flex flex-col gap-1">Customize token</ModalHeader>
+              <ModalBody>
+                <div className="text-sm text-gray-600">Referral ID/Token</div>
+                <Input
+                  value={token}
+                  onValueChange={(v) => { setToken(v); setError(null); }}
+                  variant="bordered"
+                  placeholder="your-token"
+                />
+                <div className="flex items-start gap-2 text-warning-500 text-xs">
+                  <span>Note that changing the referral token will invalidate any already shared links.</span>
+                </div>
+                {error && (<div className="text-danger-500 text-xs">{error}</div>)}
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="bordered" onPress={onClose}>Cancel</Button>
+                <Button color="primary" isLoading={saving} onPress={async () => {
+                  setSaving(true);
+                  const res = await updateReferralCodeForCurrentUser(token);
+                  setSaving(false);
+                  if (!res.success) {
+                    setError(res.error || 'Failed to update token');
+                    addToast({ title: res.error || 'Failed to update token', color: 'danger' });
+                    return;
+                  }
+                  addToast({ title: 'Token updated', color: 'success' });
+                  onClose();
+                }}>Save</Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
     </Card>
   );
 }

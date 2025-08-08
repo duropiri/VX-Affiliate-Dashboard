@@ -1,4 +1,4 @@
-import { supabase, optimizedQuery, withAbort } from './supabase';
+import { supabase, optimizedQuery, withAbort, connectionManager } from './supabase';
 import { User } from '@supabase/supabase-js';
 
 // Debug flag for verbose logging
@@ -220,53 +220,31 @@ export const getUser = async (): Promise<User | null> => {
 // This function was removed as it was causing excessive console logging
 // and is not needed for normal operation - Supabase client is ready immediately
 
-// Enhanced isUserApproved with better error handling and longer timeouts
+// Faster isUserApproved with abortable query and no nested retries
 export const isUserApproved = async (userId: string): Promise<boolean> => {
-  const maxRetries = 3;
-  const baseDelay = 3000; // Increased to 3 seconds base delay
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      debugLog(`Checking isUserApproved for user ID: ${userId} (attempt ${attempt}/${maxRetries})`);
-      
-      // Use optimized query helper with caching and connection health checks
-      const queryResult = await optimizedQuery(async () => {
-        const { data, error } = await supabase
-          .from('approved_users')
-          .select('user_id')
-          .eq('user_id', userId)
-          .eq('status', 'active')
-          .limit(1);
-        
-        // Throw on any Supabase error to trigger retry/timeout logic
-        if (error) throw error;
-        return data;
-      }, 30000, { // 30 second timeout for better reliability
-        useCache: true,
-        cacheKey: `user_approved_${userId}`,
-        cacheTTL: 60000 // 1 minute cache for approval status
-      });
-      
-      debugLog('isUserApproved query result:', queryResult);
-
-      // queryResult is now the data directly, or null if no rows found
-      const result = !!(queryResult && queryResult.length > 0);
-      debugLog('isUserApproved final result:', result);
-      return result;
-    } catch (error) {
-      console.error(`Error checking user approval (attempt ${attempt}):`, error);
-      
-      if (attempt < maxRetries) {
-        const delay = baseDelay * Math.pow(2, attempt - 1);
-        debugLog(`Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      throw error; // Don't return false, throw the error
+  const controller = new AbortController();
+  const timerId = setTimeout(() => controller.abort(), 8000);
+  try {
+    debugLog(`Checking isUserApproved for user ID: ${userId}`);
+    const { data, error } = await supabase
+      .from('approved_users')
+      .select('user_id')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .limit(1)
+      .abortSignal(controller.signal);
+    if (error) throw error;
+    const result = !!(Array.isArray(data) && data.length > 0);
+    debugLog('isUserApproved final result:', result);
+    return result;
+  } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      throw new Error('Approval check timed out (8s). Try again.');
     }
+    throw e;
+  } finally {
+    clearTimeout(timerId);
   }
-  
-  throw new Error(`Failed to check user approval after ${maxRetries} attempts`);
 };
 
 // Check if an email is approved (for cross-referencing)
@@ -552,6 +530,74 @@ const generateReferralCode = (): string => {
   return Array.from(bytes, b => alphabet[b % alphabet.length]).join('');
 };
 
+// Update the current user's referral code (token)
+export const updateReferralCodeForCurrentUser = async (
+  desiredCode: string
+): Promise<{ success: boolean; code?: string; error?: string }> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'No authenticated user' };
+
+    const normalized = (desiredCode || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '');
+
+    if (normalized.length < 3 || normalized.length > 32) {
+      return { success: false, error: 'Token must be 3-32 chars (a-z, 0-9, _ or -)' };
+    }
+
+    // Optional pre-check for a clearer “taken” message
+    const { data: takenBy, error: checkErr } = await withAbort(
+      supabase
+        .from('affiliate_referrers')
+        .select('user_id')
+        .eq('code', normalized)
+        .maybeSingle(),
+      8000
+    ) as any;
+    if (checkErr) return { success: false, error: checkErr.message };
+    if (takenBy && takenBy.user_id !== user.id) {
+      return { success: false, error: 'That token is already taken' };
+    }
+
+    // Upsert on user_id unique constraint; tolerate 0 rows returned under RLS using maybeSingle
+    const { data, error } = await withAbort(
+      supabase
+        .from('affiliate_referrers')
+        .upsert({ user_id: user.id, code: normalized }, { onConflict: 'user_id' })
+        .select('code')
+        .maybeSingle(),
+      8000
+    ) as any;
+
+    if (error) {
+      // Unique violation from PostgREST/PG
+      if (error.code === '23505') {
+        return { success: false, error: 'That token is already taken' };
+      }
+      return { success: false, error: error.message || 'Failed to update token' };
+    }
+
+    if (!data) {
+      return { success: false, error: 'No row returned (RLS?)' };
+    }
+
+    // Update referral code cache to reflect new value immediately
+    try {
+      const cacheKey = `referral_code_${user.id}`;
+      connectionManager.setCache(cacheKey, { code: data?.code }, 600000);
+    } catch {}
+
+    return { success: true, code: data?.code };
+  } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      return { success: false, error: 'Update timed out. Try again.' };
+    }
+    return { success: false, error: e?.message || 'Unknown error' };
+  }
+};
+
 // Asset management functions
 export interface Asset {
   id: string;
@@ -692,7 +738,10 @@ export interface UserReports {
 }
 
 // Enhanced user reports retrieval without fallback data
-export const getUserReports = async (timeframe: string = "Last 30 Days"): Promise<UserReports | null> => {
+export const getUserReports = async (
+  timeframe: string = "Last 30 Days",
+  opts: { force?: boolean } = {}
+): Promise<UserReports | null> => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -714,7 +763,7 @@ export const getUserReports = async (timeframe: string = "Last 30 Days"): Promis
       if (error) throw error;
       return data;
     }, 30000, { // 30 second timeout for better reliability
-      useCache: true,
+      useCache: !opts.force,
       cacheKey: `user_reports_${user.id}_${timeframe}`,
       cacheTTL: 300000 // 5 minutes cache for user reports
     });
@@ -793,13 +842,14 @@ export const transformUserReports = (userReports: any, selectedTimeframe: string
         mdtStartDate.setMonth(mdtToday.getMonth() - 6);
         mdtStartDate.setHours(0, 0, 0, 0);
         break;
-      case "This Year":
-        mdtStartDate = new Date(mdtToday.getFullYear(), 0, 1);
-        mdtStartDate.setHours(0, 0, 0, 0);
-        // Set end date to December 31st of current year
-        mdtToday = new Date(mdtToday.getFullYear(), 11, 31);
-        mdtToday.setHours(23, 59, 59, 999);
+      case "This Year": {
+        const year = new Date().toLocaleString("en-US", { timeZone: TIMEZONE, year: "numeric" });
+        const yearNum = Number(year);
+        // Explicitly anchor both bounds to MDT year to avoid cross-TZ drift
+        mdtStartDate = new Date(`${yearNum}-01-01T00:00:00`);
+        mdtToday = new Date(`${yearNum}-12-31T23:59:59`);
         break;
+      }
       case "All Time":
         // For "All Time", we'll use a reasonable default (last 2 years)
         mdtStartDate.setFullYear(mdtToday.getFullYear() - 2);
@@ -1138,7 +1188,9 @@ export const aggregateDataByMonth = (dailyData: DailyData[]): DailyData[] => {
 };
 
 // Enhanced calculate totals without fallback
-export const calculateUserReportsTotals = async (): Promise<{
+export const calculateUserReportsTotals = async (
+  opts: { force?: boolean } = {}
+): Promise<{
   clicks: number;
   referrals: number;
   customers: number;
@@ -1165,7 +1217,7 @@ export const calculateUserReportsTotals = async (): Promise<{
       if (error) throw error;
       return data;
     }, 30000, { // 30 second timeout for better reliability
-      useCache: true,
+      useCache: !opts.force,
       cacheKey: `user_reports_totals_${user.id}`,
       cacheTTL: 300000 // 5 minutes cache for user reports totals
     });

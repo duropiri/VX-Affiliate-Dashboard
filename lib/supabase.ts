@@ -330,6 +330,14 @@ export const optimizedQuery = async (
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       console.error(`❌ Query attempt ${attempt} failed:`, lastError);
+      const name = (lastError as any)?.name || '';
+      const message = lastError.message || '';
+      const isAbort = name === 'AbortError' || /abort/i.test(message);
+      const isTimeout = /timeout/i.test(message);
+      // Do not retry on timeouts/aborts
+      if (isAbort || isTimeout) {
+        throw lastError;
+      }
       
       if (attempt <= maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Exponential backoff, max 10s

@@ -50,6 +50,16 @@ import {
 import { Line } from "react-chartjs-2";
 import { addToast } from "@heroui/toast";
 
+// Consistent timezone for display (matches lib/auth TIMEZONE)
+const DISPLAY_TZ = "America/Edmonton";
+
+const formatMonthYearTZ = (ymd: string) =>
+  new Date(`${ymd}T00:00:00`).toLocaleDateString("en-US", {
+    timeZone: DISPLAY_TZ,
+    month: "short",
+    year: "numeric",
+  });
+
 // Register Chart.js components
 ChartJS.register(
   CategoryScale,
@@ -105,11 +115,7 @@ export default function ReportsPage() {
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .map((item) => {
           const date = shouldAggregateByMonth(selectedTimeframe)
-            ? new Date(item.date).toLocaleDateString("en-US", {
-                timeZone: "America/Denver",
-                month: "short",
-                year: "numeric",
-              })
+            ? formatMonthYearTZ(item.date)
             : formatDateDisplayMDT(item.date);
 
           return [
@@ -280,19 +286,11 @@ export default function ReportsPage() {
 
     const labels = sortedData.map((item) => {
       if (shouldAggregateByMonth(selectedTimeframe)) {
-        // Show month and year for aggregated data (e.g., "Dec 2024")
-        const date = new Date(item.date);
-        return date.toLocaleDateString("en-US", {
-          month: "short",
-          year: "numeric",
-        });
+        // Month-year label pinned to DISPLAY_TZ to avoid off-by-one
+        return formatMonthYearTZ(item.date);
       } else {
-        // Show month and day for daily data (e.g., "Jul 8")
-        const date = new Date(item.date);
-        return date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        });
+        // Day label using MDT helper already handles timezone
+        return formatDateDisplayMDT(item.date);
       }
     });
 
@@ -620,11 +618,7 @@ export default function ReportsPage() {
                       <TableRow key={index}>
                         <TableCell>
                           {shouldAggregateByMonth(selectedTimeframe)
-                            ? new Date(item.date).toLocaleDateString("en-US", {
-                                timeZone: "America/Denver",
-                                month: "short",
-                                year: "numeric",
-                              })
+                            ? formatMonthYearTZ(item.date)
                             : formatDateDisplayMDT(item.date)}
                         </TableCell>
                         <TableCell>${item.earnings.toFixed(2)}</TableCell>
