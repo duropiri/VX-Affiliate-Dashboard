@@ -571,7 +571,7 @@ export default function SettingsPage() {
                 Save Profile
               </Button>
 
-              <Button
+              {/* <Button
                 color="secondary"
                 variant="bordered"
                 className="w-full"
@@ -601,7 +601,7 @@ export default function SettingsPage() {
                 startContent={<Bug size={16} />}
               >
                 Force Session Refresh
-              </Button>
+              </Button> */}
             </CardBody>
           </Card>
 
