@@ -25,16 +25,13 @@ export default function AssetsPage() {
   useEffect(() => {
     const loadAssets = async () => {
       try {
-        console.log("🔄 Loading assets from database...");
-        const assetsData = await getAssets();
-
-        if (assetsData) {
-          console.log("✅ Assets loaded:", assetsData);
-          setAssets(assetsData);
-        } else {
-          console.log("⚠️ No assets found or error occurred");
-          setAssets([]);
-        }
+        console.log("🔄 Loading assets from server API...");
+        const res = await fetch("/api/me/assets", { cache: "no-store" });
+        if (!res.ok) throw new Error(await res.text());
+        const json = await res.json();
+        const assetsData = json?.assets || [];
+        console.log("✅ Assets loaded:", assetsData);
+        setAssets(assetsData);
       } catch (err) {
         console.error("❌ Error loading assets:", err);
         setError("Failed to load assets");
