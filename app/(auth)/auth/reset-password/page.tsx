@@ -25,51 +25,33 @@ function ResetPasswordContent() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    // Check if we have the necessary parameters
     const token = searchParams.get("token");
     const type = searchParams.get("type");
 
-    console.log("Reset password page loaded with params:", {
-      token: token ? "present" : "missing",
-      type: type,
-      allParams: Object.fromEntries(searchParams.entries())
-    });
-
-    // For Supabase password reset, we can proceed if we have the basic parameters
-    // The actual verification happens when we try to update the password
-    if (!token || type !== "recovery") {
-      console.error("Invalid reset link parameters:", { token: !!token, type });
-      
-      // Check if we have a session (user might have been redirected after verification)
-      const checkSession = async () => {
-        try {
-          const { data: { session }, error } = await supabase.auth.getSession();
-          
+    // Supabase sends a link to this page with ?type=recovery&token=...
+    // We need to exchange that for a session so updateUser() can succeed.
+    const establishSession = async () => {
+      try {
+        if (type === "recovery" && token) {
+          const { error } = await supabase.auth.exchangeCodeForSession(token);
           if (error) {
-            console.error("Session error:", error);
-            setError("Invalid reset link. Please request a new password reset.");
-            return;
-          }
-
-          if (session) {
-            console.log("User has a valid session, proceeding to password form");
-            // User has a valid session, they can proceed to reset password
-            return;
-          } else {
-            console.error("No session found and no valid parameters");
+            console.error("exchangeCodeForSession error:", error);
             setError("Invalid reset link. Please request a new password reset.");
           }
-        } catch (error) {
-          console.error("Error checking session:", error);
-          setError("Invalid reset link. Please request a new password reset.");
+        } else {
+          // Fallback: check if a session already exists (some providers may redirect after verification)
+          const { data, error } = await supabase.auth.getSession();
+          if (error || !data.session) {
+            setError("Invalid reset link. Please request a new password reset.");
+          }
         }
-      };
+      } catch (e) {
+        console.error("Session establish error:", e);
+        setError("Invalid reset link. Please request a new password reset.");
+      }
+    };
 
-      checkSession();
-      return;
-    }
-
-    console.log("Reset link parameters look valid, proceeding to password form");
+    establishSession();
   }, [searchParams]);
 
   const handlePasswordReset = async (e: React.FormEvent) => {

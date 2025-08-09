@@ -13,7 +13,7 @@ import {
   Form,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
-import { resetPassword } from "@/lib/auth";
+       import { resetPassword } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
@@ -92,12 +92,22 @@ function AuthPageContent() {
     }
   };
 
-  const handlePasswordReset = async (e: React.FormEvent) => {
+         const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log("Password reset form submitted");
     setLoading(true);
     try {
-      await resetPassword(resetEmail);
+             // Use server endpoint that validates email existence before sending
+             const res = await fetch("/api/auth/password-reset/request", {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({ email: resetEmail }),
+             });
+
+             if (!res.ok) {
+               const text = await res.text();
+               throw new Error(text || "Failed to send reset email");
+             }
 
       addToast({
         title: "Password reset email sent! Check your inbox.",
@@ -116,6 +126,12 @@ function AuthPageContent() {
           description: "Please wait about an hour before requesting another reset email.",
           color: "warning",
         });
+             } else if (error.message?.toLowerCase().includes("no account")) {
+               addToast({
+                 title: "No account found",
+                 description: "There is no user with that email.",
+                 color: "danger",
+               });
       } else {
         addToast({
           title: error.message || "Failed to send reset email",
