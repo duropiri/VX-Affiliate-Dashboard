@@ -29,99 +29,18 @@ const getBaseUrl = (): string => {
   return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
 };
 
-export const signInWithMagicLink = async (email: string) => {
-  try {
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${getBaseUrl()}/home`,
-      },
-    });
-    
-    if (error) {
-      throw error; // Throw to trigger retry/timeout logic
-    }
-  } catch (error) {
-    console.error('Error signing in with magic link:', error);
-    throw error; // Re-throw to let the caller handle it
-  }
-};
+// removed: signInWithMagicLink (NextAuth handles email sign-in)
 
-export const signInWithGoogle = async () => {
-  try {
-    // Use callback for local development, direct redirect for production
-    const redirectTo = process.env.NODE_ENV === 'development' 
-      ? `${getBaseUrl()}/auth/callback`
-      : `${getBaseUrl()}/home`;
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo,
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      },
-    });
-    if (error) throw error; // Throw to trigger retry/timeout logic
-  } catch (error) {
-    console.error('Error signing in with Google:', error);
-    throw error; // Re-throw to let the caller handle it
-  }
-};
+// removed: signInWithGoogle (NextAuth handles OAuth)
 
 // REMOVED: User credential storage functions
 // These were removed for security reasons - storing passwords in localStorage is a security risk.
 // Supabase's persistSession and refresh tokens handle session persistence securely.
 
 // Enhanced sign in with email
-export const signInWithEmail = async (email: string, password: string) => {
-  try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    
-    if (error) {
-      throw error; // Throw to trigger retry/timeout logic
-    }
+// removed: signInWithEmail (NextAuth credentials handles this)
 
-    // Check approval status with enhanced error handling
-    const approved = await handlePostAuth(data.user);
-    if (!approved) {
-      await supabase.auth.signOut();
-      throw new Error('Account not approved');
-    }
-
-    return data;
-  } catch (error) {
-    console.error('Error signing in with email:', error);
-    throw error; // Re-throw to let the caller handle it
-  }
-};
-
-export const signUpWithEmail = async (
-  email: string,
-  password: string,
-  userData: Record<string, any>
-) => {
-  try {
-    // Call our admin endpoint
-    const res = await fetch('/api/admin/create-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, userData }),
-    });
-    
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Sign-up failed');
-    return json;
-  } catch (error) {
-    console.error('Error signing up with email:', error);
-    throw error; // Re-throw to let the caller handle it
-  }
-};
+// removed: signUpWithEmail (admin flow handled via API)
 
 export const createUserWithPassword = async (email: string, password: string, userData: any) => {
   try {
