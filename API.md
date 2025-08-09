@@ -34,6 +34,34 @@ Examples
      ```bash
      curl -i -b cookie.jar https://<host>/api/me/profile
      ```
+  4) Here’s a command that logs in and creates a PAT. Replace the placeholders before running:
+    ```bash
+    # 1) CSRF
+    csrf=$(curl -sS -c cookie.jar https://<host>/api/auth/csrf | jq -r .csrfToken) && echo "CSRF: ${csrf:-<empty>}"
+
+    # 2) Sign in (capture headers to see status)
+    curl -sS -b cookie.jar -c cookie.jar \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      -X POST https://<host>/api/auth/callback/credentials \
+      --data-urlencode "csrfToken=$csrf" \
+      --data-urlencode "email=<email>" \
+      --data-urlencode "password=<password>" \
+      --data-urlencode "callbackUrl=/" \
+      -D signin_headers.txt -o /dev/null && \
+    echo "Signin status: $(grep -i '^HTTP/' signin_headers.txt | tail -1)"
+
+    # 3) Check we have a session token in cookie jar (should exist if sign-in worked)
+    echo "Session cookie present?"; grep -E 'next-auth\.session-token' cookie.jar || echo "No session cookie"
+
+    # 4) Create PAT (save headers/body for inspection)
+    curl -sS -b cookie.jar -H 'Content-Type: application/json' \
+      -X POST https://<host>/api/me/tokens \
+      -d '{"name":"Integration Key","expires_at":null}' \
+      -D token_headers.txt -o token_body.json && \
+    echo "Create token status: $(grep -i '^HTTP/' token_headers.txt | tail -1)" && \
+    echo "Response body:" && cat token_body.json && \
+    echo "Token only:" && jq -r .token token_body.json
+    ```
 
 - Bearer token
   - Using a NextAuth session token (read the `next-auth.session-token` cookie value):
