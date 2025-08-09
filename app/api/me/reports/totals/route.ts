@@ -36,4 +36,8 @@ export async function GET() {
   return NextResponse.json({ clicks, referrals, customers, earnings });
 }
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const runtime = "nodejs";
+
 
