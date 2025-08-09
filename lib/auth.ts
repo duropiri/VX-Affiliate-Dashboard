@@ -1,5 +1,7 @@
 import { supabase, optimizedQuery, withAbort, connectionManager } from './supabase';
 import { User } from '@supabase/supabase-js';
+import { getSession } from 'next-auth/react';
+// import { signIn, signOut } from "next-auth/react";
 
 // Debug flag for verbose logging
 const DEBUG_MODE = process.env.NODE_ENV === 'development';
@@ -65,24 +67,6 @@ export const signInWithGoogle = async () => {
     if (error) throw error; // Throw to trigger retry/timeout logic
   } catch (error) {
     console.error('Error signing in with Google:', error);
-    throw error; // Re-throw to let the caller handle it
-  }
-};
-
-export const signInWithGithub = async () => {
-  try {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'github',
-      options: {
-        redirectTo: `${getBaseUrl()}/home`,
-      },
-    });
-    
-    if (error) {
-      throw error; // Throw to trigger retry/timeout logic
-    }
-  } catch (error) {
-    console.error('Error signing in with GitHub:', error);
     throw error; // Re-throw to let the caller handle it
   }
 };
@@ -202,17 +186,21 @@ export const signOut = async () => {
 
 export const getUser = async (): Promise<User | null> => {
   try {
-    const { data: { user }, error } = await supabase.auth.getUser();
-    
-    if (error) {
-      console.error('Error getting user:', error);
-      throw error; // Throw to trigger retry/timeout logic
+    // Prefer NextAuth session as the source of truth
+    const session = await getSession();
+    const nextAuthUserId = (session?.user as any)?.id as string | undefined;
+    if (nextAuthUserId) {
+      return {
+        id: nextAuthUserId,
+        email: (session?.user as any)?.email || null,
+      } as unknown as User;
     }
-    
+    // Fallback to Supabase browser session (legacy)
+    const { data: { user } } = await supabase.auth.getUser();
     return user;
   } catch (error) {
     console.error('Error getting user:', error);
-    throw error; // Re-throw to let the caller handle it
+    return null;
   }
 };
 
@@ -743,28 +731,29 @@ export const getUserReports = async (
   opts: { force?: boolean } = {}
 ): Promise<UserReports | null> => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    const session = await getSession();
+    const userId = (session?.user as any)?.id as string | undefined;
+    if (!userId) {
       console.error('No authenticated user found');
       return null;
     }
 
-    debugLog('🔄 Fetching user reports for:', user.id);
+    debugLog('🔄 Fetching user reports for:', userId);
     
     // Get the user_reports from dashboard_kpis with optimized query helper and caching
     const queryResult = await optimizedQuery(async () => {
       const { data, error } = await supabase
         .from('dashboard_kpis')
         .select('user_reports')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .single();
       
       // Throw on any Supabase error to trigger retry/timeout logic
       if (error) throw error;
       return data;
-    }, 30000, { // 30 second timeout for better reliability
+    }, 30000, {
       useCache: !opts.force,
-      cacheKey: `user_reports_${user.id}_${timeframe}`,
+      cacheKey: `user_reports_${userId}_${timeframe}`,
       cacheTTL: 300000 // 5 minutes cache for user reports
     });
     
@@ -1197,28 +1186,29 @@ export const calculateUserReportsTotals = async (
   earnings: number;
 }> => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    const session = await getSession();
+    const userId = (session?.user as any)?.id as string | undefined;
+    if (!userId) {
       console.error('No authenticated user found');
       throw new Error('No authenticated user found');
     }
 
-    debugLog('🔄 Calculating totals from user_reports for:', user.id);
+    debugLog('🔄 Calculating totals from user_reports for:', userId);
     
     // Get the user_reports from dashboard_kpis with optimized query helper and caching
     const queryResult = await optimizedQuery(async () => {
       const { data, error } = await supabase
         .from('dashboard_kpis')
         .select('user_reports')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .single();
       
       // Throw on any Supabase error to trigger retry/timeout logic
       if (error) throw error;
       return data;
-    }, 30000, { // 30 second timeout for better reliability
+    }, 30000, {
       useCache: !opts.force,
-      cacheKey: `user_reports_totals_${user.id}`,
+      cacheKey: `user_reports_totals_${userId}`,
       cacheTTL: 300000 // 5 minutes cache for user reports totals
     });
     

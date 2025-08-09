@@ -1,5 +1,10 @@
+"use client";
+
 import { AuthGuard } from "@/components/auth-guard";
 import { Navbar } from "@/components/navbar";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 // Simple logo component
 
@@ -8,6 +13,16 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  console.log("🔍 Session:", session);
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/auth");
+    }
+  }, [status, router]);
+
   return (
     <AuthGuard>
       <div className="min-h-screen bg-gray-50">

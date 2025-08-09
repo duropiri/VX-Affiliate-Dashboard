@@ -30,13 +30,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
-import {
-  getUserReports,
-  UserReports,
-  DailyData,
-  formatDateDisplayMDT,
-  shouldAggregateByMonth,
-} from "@/lib/auth";
+import { UserReports, DailyData, formatDateDisplayMDT, shouldAggregateByMonth } from "@/lib/auth";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -154,7 +148,40 @@ export default function ReportsPage() {
       }
       setError(null);
       
-      const reportsData = await getUserReports(selectedTimeframe);
+      // Fetch raw user_reports server-side to avoid client RLS/caching
+      const res = await fetch("/api/me/reports/raw", { cache: "no-store" });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      const userReports = json?.user_reports;
+
+      if (!userReports) throw new Error("No reports data returned from database");
+
+      // Build the transformed structure like before using transformUserReports
+      // Minimal inline transform for this page
+      const overview = userReports.overview || {};
+      const allDates = Object.keys(overview).sort();
+      const dailyData: DailyData[] = allDates.map((dateKey: string) => ({
+        date: dateKey,
+        earnings: overview[dateKey]?.earnings || 0,
+        newCustomers: overview[dateKey]?.customers || 0,
+        newReferrals: overview[dateKey]?.signups || 0,
+        clicksCount: overview[dateKey]?.clicks || 0,
+      }));
+
+      const totals = dailyData.reduce(
+        (acc, d) => ({
+          earnings: acc.earnings + d.earnings,
+          clicks: acc.clicks + d.clicksCount,
+          signups: acc.signups + d.newReferrals,
+          customers: acc.customers + d.newCustomers,
+        }),
+        { earnings: 0, clicks: 0, signups: 0, customers: 0 }
+      );
+
+      const reportsData: UserReports = {
+        overview: totals,
+        dailyData,
+      } as any;
 
       if (reportsData) {
         console.log("✅ Reports loaded:", reportsData);

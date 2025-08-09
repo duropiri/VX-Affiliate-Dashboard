@@ -5,6 +5,7 @@ import { DataTable } from "@/components/data-table";
 import { Button, Card, CardBody, Spinner } from "@heroui/react";
 import { DownloadIcon, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useSession } from "next-auth/react";
 import { addToast } from "@heroui/toast";
 
 // Define the referral data structure
@@ -44,81 +45,40 @@ export default function ReferralsPage() {
       try {
         console.log("🔄 Loading referrals data...");
         setLoading(true);
-
-        console.log("🔍 Getting user from Supabase...");
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        console.log("👤 User:", user?.email, "ID:", user?.id);
+        const res = await fetch("/api/me/reports/raw", { cache: "no-store" });
+        if (!res.ok) throw new Error(await res.text());
+        const json = await res.json();
+        const userReports = json?.user_reports;
+        const userReferrals = json?.user_referrals;
 
         if (!isMounted) {
           console.log("❌ Component unmounted, stopping");
           return;
         }
 
-        if (user) {
-          console.log("✅ User found, loading referrals...");
-
-          // Test database connection first
-          console.log("🔍 Testing database connection...");
-          const { data: testData, error: testError } = await supabase
-            .from("dashboard_kpis")
-            .select("count")
-            .limit(1);
-
-          console.log("🔍 dashboard_kpis test:", { testData, testError });
-
-          // Load referrals from dashboard_kpis.user_referrals
-          console.log("🔍 Loading referrals from dashboard_kpis...");
-          const { data, error } = await supabase
-            .from("dashboard_kpis")
-            .select("user_referrals")
-            .eq("user_id", user.id)
-            .single();
-
-          console.log("🔍 Referrals query result:", { data, error });
-
-          if (!isMounted) {
-            console.log(
-              "❌ Component unmounted during referrals load, stopping"
-            );
-            return;
+        if (userReferrals || (userReports && userReports.links)) {
+          const raw = userReferrals || userReports.links || [];
+          let referralsData: ReferralData[] = [];
+          try {
+            if (Array.isArray(raw)) {
+              referralsData = raw as ReferralData[];
+            } else if (typeof raw === "string") {
+              referralsData = JSON.parse(raw) as ReferralData[];
+            } else if (typeof raw === "object") {
+              referralsData = Object.values(raw) as any;
+            }
+          } catch (e) {
+            referralsData = [];
           }
 
-          if (data && data.user_referrals) {
-            console.log("✅ Referrals data found:", data.user_referrals);
-
-            // Handle the data - it might be a string or already an object
-            let referralsData: ReferralData[];
-            try {
-              if (typeof data.user_referrals === "string") {
-                // If it's a string, parse it
-                referralsData = JSON.parse(
-                  data.user_referrals
-                ) as ReferralData[];
-              } else {
-                // If it's already an object, use it directly
-                referralsData = data.user_referrals as ReferralData[];
-              }
-              console.log("✅ Processed referrals data:", referralsData);
-            } catch (parseError) {
-              console.error("❌ Error processing referrals data:", parseError);
-              referralsData = [];
-            }
-
-            if (referralsData && referralsData.length > 0) {
-              const convertedReferrals = convertReferralData(referralsData);
-              setReferrals(convertedReferrals);
-            } else {
-              console.log("⚠️ No referrals found in data");
-              setReferrals([]);
-            }
+          if (referralsData.length > 0) {
+            const converted = convertReferralData(referralsData);
+            setReferrals(converted);
           } else {
-            console.log("⚠️ No referrals data found, using empty array");
             setReferrals([]);
           }
         } else {
-          console.log("❌ No user found");
+          setReferrals([]);
         }
       } catch (error) {
         console.error("💥 Error loading referrals data:", error);

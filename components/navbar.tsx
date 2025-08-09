@@ -20,8 +20,8 @@ import {
   NavbarMenuItem,
 } from "@heroui/react";
 import { siteConfig } from "@/config/site";
-import { supabase } from "@/lib/supabase";
-import { isUserAdmin, signOut } from "@/lib/auth";
+import { isUserAdmin } from "@/lib/auth";
+import { signOut, useSession } from "next-auth/react";
 import { User } from "@supabase/supabase-js";
 import { Settings } from "lucide-react";
 import { GrUserAdmin } from "react-icons/gr";
@@ -32,35 +32,38 @@ import { FaUser } from "react-icons/fa";
 export function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: session, status } = useSession();
+  const [displayName, setDisplayName] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined);
+  const [loading, setLoading] = useState(status === "loading");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const connectionStatus = ConnectionStatus();
 
   useEffect(() => {
-    const getUser = async () => {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        setUser(user);
-      } catch (error) {
-        console.error("Error getting user:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    getUser();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+    setLoading(status === "loading");
+    if (status === "authenticated") {
+      // Set initial values from session immediately
+      setDisplayName(session?.user?.name || session?.user?.email || "");
+      setEmail(session?.user?.email || "");
+      setAvatarUrl((session?.user as any)?.image || undefined);
+      // Fetch authoritative profile from server to avoid stale names
+      (async () => {
+        try {
+          const res = await fetch("/api/me/profile", { cache: "no-store" });
+          if (!res.ok) return; // keep session defaults
+          const json = await res.json();
+          const p = json?.profile;
+          if (p) {
+            const fullName = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+            setDisplayName(fullName || session?.user?.email || "");
+            setEmail(p.user_email || session?.user?.email || "");
+            setAvatarUrl(p.avatar_url || (session as any)?.user?.image || undefined);
+          }
+        } catch {}
+      })();
+    }
+  }, [status, session]);
 
   const handleSignOut = async () => {
     try {
@@ -175,13 +178,13 @@ export function Navbar() {
               <div className="relative">
                 <Avatar
                   as="button"
-                  src={user?.user_metadata?.avatar_url}
+                   src={avatarUrl}
                   className="transition-transform flex md:hidden"
-                  name={user?.user_metadata?.full_name || user?.email}
+                   name={displayName}
                   size="md"
                   radius="sm"
                   isBordered={connectionStatus.isBordered}
-                  color={connectionStatus.color}
+                  // color={connectionStatus.color}
                   onClick={connectionStatus.onClick}
                   title={connectionStatus.title}
                 />
@@ -190,18 +193,18 @@ export function Navbar() {
               <div className="relative hidden md:block">
                 <HeroUser
                   as="button"
-                  avatarProps={{
+                   avatarProps={{
                     isBordered: connectionStatus.isBordered,
-                    color: connectionStatus.color,
-                    src: user?.user_metadata?.avatar_url,
+                    // color: connectionStatus.color,
+                     src: avatarUrl,
                     showFallback: false,
                     fallback: <FaUser className="size-5" />,
                     radius: "sm", 
                     className: "mr-2",
                   }}
                   className="transition-transform"
-                  description={user?.email}
-                  name={user?.user_metadata?.full_name || user?.email}
+                  description={email || undefined}
+                  name={displayName}
                   onClick={connectionStatus.onClick}
                   title={connectionStatus.title}
                 />
@@ -212,8 +215,8 @@ export function Navbar() {
           <DropdownMenu aria-label="Profile actions" variant="flat">
             <DropdownItem key="profile" className="h-14 gap-2">
               <p className="font-semibold">Signed in as</p>
-              <p className="font-semibold">{user?.email}</p>
-              {isUserAdmin(user) && (
+              <p className="font-semibold">{session?.user?.email}</p>
+              {false && (
                 <p className="text-xs text-blue-600 font-medium">Admin User</p>
               )}
             </DropdownItem>
@@ -224,7 +227,7 @@ export function Navbar() {
             >
               Settings
             </DropdownItem>
-            {isUserAdmin(user) ? (
+            {session?.user?.email?.toLowerCase().endsWith("@virtualxposure.com") ? (
               <DropdownItem
                 key="admin"
                 startContent={<GrUserAdmin className="h-4 w-4" />}

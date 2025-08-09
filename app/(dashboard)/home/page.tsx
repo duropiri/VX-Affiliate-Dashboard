@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ReferralCard } from "@/components/referral-card";
 import { StatsBar } from "@/components/stats-bar";
@@ -24,11 +24,8 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
 
-  // Reset loading state on mount
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-  }, []);
+  // Track first load to prevent duplicate initial fetches
+  const didInitRef = useRef(false);
 
   const loadData = async (force: boolean = false) => {
     try {
@@ -52,8 +49,26 @@ export default function HomePage() {
       console.log("📊 Starting data queries...");
 
       const [referralCodeResult, kpiResult] = await Promise.allSettled([
-        getReferralCode(user.id),
-        calculateUserReportsTotals({ force }),
+        (async () => {
+          try {
+            const res = await fetch("/api/me/referrer-code", { cache: "no-store" });
+            if (!res.ok) throw new Error(await res.text());
+            const json = await res.json();
+            return json.code as string | null;
+          } catch (e) {
+            return await getReferralCode(user.id);
+          }
+        })(),
+        (async () => {
+          try {
+            const res = await fetch("/api/me/reports/totals", { cache: "no-store" });
+            if (!res.ok) throw new Error(await res.text());
+            return await res.json();
+          } catch (e) {
+            // fallback to client lib if server route fails
+            return await calculateUserReportsTotals({ force });
+          }
+        })(),
       ]);
 
       console.log("📈 Query results:", { referralCodeResult, kpiResult });
@@ -76,7 +91,7 @@ export default function HomePage() {
 
       // Handle KPIs from user_reports totals
       if (kpiResult.status === "fulfilled") {
-        setKpis(kpiResult.value);
+        setKpis(kpiResult.value as any);
         console.log("📊 KPIs loaded from user_reports:", kpiResult.value);
       } else {
         console.error("❌ Error loading KPIs from user_reports:", kpiResult.reason);
@@ -97,32 +112,17 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    console.log("🚀 Starting loadData function");
+    if (didInitRef.current) return;
+    didInitRef.current = true;
     loadData(true);
   }, []);
 
   // Option B: re-fetch on navigation/focus/online, bypassing cache
   useEffect(() => {
-    const revalidate = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-        // Force-refresh key dashboard data derived from user_reports
-        await getUserReports("Last 30 Days", { force: true } as any);
-        // Then reload the lightweight aggregates displayed here
-        await loadData(true);
-      } catch (e) {
-        console.warn("Revalidate failed", e);
-      }
-    };
-
-    // Route change revalidate (app router: usePathname changes)
-    revalidate();
-
     const onVisibility = () => {
-      if (!document.hidden) revalidate();
+      if (!document.hidden) loadData(true);
     };
-    const onOnline = () => revalidate();
+    const onOnline = () => loadData(true);
 
     window.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('online', onOnline);
@@ -138,11 +138,7 @@ export default function HomePage() {
     (async () => {
       const user = await getUser();
       if (!user) return;
-      // Initial forced refresh
-      await getUserReports("Last 30 Days", { force: true } as any);
-      await loadData(true);
       unsub = subscribeToUserKpis(user.id, async () => {
-        await getUserReports("Last 30 Days", { force: true } as any);
         await loadData(true);
       });
     })();

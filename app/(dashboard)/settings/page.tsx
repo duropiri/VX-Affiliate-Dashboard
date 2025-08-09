@@ -50,85 +50,21 @@ export default function SettingsPage() {
       try {
         console.log("🔄 Loading profile data...");
         setLoading(true);
+        const res = await fetch("/api/me/profile", { cache: "no-store" });
+        if (!res.ok) throw new Error(await res.text());
+        const json = await res.json();
+        const data = json?.profile;
 
-        console.log("🔍 Getting user from Supabase...");
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        console.log("👤 User:", user?.email, "ID:", user?.id);
+        if (!isMounted) return;
 
-        if (!isMounted) {
-          console.log("❌ Component unmounted, stopping");
-          return;
-        }
-
-        if (user) {
-          console.log("✅ User found, loading profile...");
-
-          // Test database connection first
-          console.log("🔍 Testing database connection...");
-          const { data: testData, error: testError } = await supabase
-            .from("affiliate_profiles")
-            .select("count")
-            .limit(1);
-
-          console.log("🔍 affiliate_profiles test:", { testData, testError });
-
-          // Load user profile
-          console.log("🔍 Loading user profile...");
-          const { data, error } = await supabase
-            .from("affiliate_profiles")
-            .select("*")
-            .eq("user_id", user.id)
-            .single();
-
-          console.log("🔍 Profile query result:", { data, error });
-
-          if (!isMounted) {
-            console.log("❌ Component unmounted during profile load, stopping");
-            return;
-          }
-
-          if (data) {
-            console.log("✅ Profile data found:", data);
-            setProfile({
-              firstName: data.first_name || "",
-              lastName: data.last_name || "",
-              avatarUrl: data.avatar_url || "",
-              socialLinks: data.social_links || {
-                twitter: "",
-                facebook: "",
-                linkedin: "",
-              },
-              notifications: data.notifications || {
-                emailReports: true,
-                smsAlerts: false,
-                pushNotifications: true,
-              },
-            });
-          } else {
-            console.log("⚠️ No profile data found, using defaults");
-            // Set default values if no profile exists
-            setProfile({
-              firstName: user.user_metadata?.full_name?.split(" ")[0] || "User",
-              lastName:
-                user.user_metadata?.full_name?.split(" ").slice(1).join(" ") ||
-                "Name",
-              avatarUrl: user.user_metadata?.avatar_url || "",
-              socialLinks: {
-                twitter: "",
-                facebook: "",
-                linkedin: "",
-              },
-              notifications: {
-                emailReports: true,
-                smsAlerts: false,
-                pushNotifications: true,
-              },
-            });
-          }
-        } else {
-          console.log("❌ No user found");
+        if (data) {
+          setProfile({
+            firstName: data.first_name || "",
+            lastName: data.last_name || "",
+            avatarUrl: data.avatar_url || "",
+            socialLinks: data.social_links || { twitter: "", facebook: "", linkedin: "" },
+            notifications: data.notifications || { emailReports: true, smsAlerts: false, pushNotifications: true },
+          });
         }
       } catch (error) {
         console.error("💥 Error loading profile data:", error);
@@ -256,42 +192,13 @@ export default function SettingsPage() {
 
       console.log("📝 Profile data to save:", profileData);
 
-      // First, check if the profile exists
-      const { data: existingProfile, error: checkError } = await supabase
-        .from("affiliate_profiles")
-        .select("id")
-        .eq("user_id", user.id)
-        .single();
-
-      console.log("🔍 Existing profile check:", { existingProfile, checkError });
-
-      let result;
-      if (checkError && checkError.code === 'PGRST116') {
-        // Profile doesn't exist, insert new one
-        console.log("🆕 Creating new profile...");
-        result = await supabase
-          .from("affiliate_profiles")
-          .insert(profileData)
-          .select()
-          .single();
-      } else if (checkError) {
-        // Some other error occurred
-        console.error("❌ Error checking existing profile:", checkError);
-        addToast({
-          title: "Failed to check profile",
-          description: checkError.message,
-          color: "danger",
-        });
-        return;
+      const resultRes = await fetch("/api/me/profile", { method: "PUT", body: JSON.stringify(profileData) });
+      const result = { data: null as any, error: null as any } as any;
+      if (!resultRes.ok) {
+        result.error = { message: await resultRes.text() } as any;
       } else {
-        // Profile exists, update it
-        console.log("🔄 Updating existing profile...");
-        result = await supabase
-          .from("affiliate_profiles")
-          .update(profileData)
-          .eq("user_id", user.id)
-          .select()
-          .single();
+        const json = await resultRes.json();
+        result.data = json?.profile;
       }
 
       console.log("🔍 Profile save result:", result);

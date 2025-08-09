@@ -13,13 +13,11 @@ import {
   Form,
 } from "@heroui/react";
 import { FcGoogle } from "react-icons/fc";
-import {
-  signInWithEmail,
-  resetPassword,
-} from "@/lib/auth";
+import { resetPassword } from "@/lib/auth";
 import { addToast } from "@heroui/toast";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
+import { useSession, signIn, signOut } from "next-auth/react";
 
 function AuthPageContent() {
   const router = useRouter();
@@ -46,11 +44,12 @@ function AuthPageContent() {
     }
   }, [error]);
 
-  const handleEmailSignIn = async () => {
+  const handleEmailSignIn = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!email || !password) {
       addToast({
         title: "Error",
-        description: "Please fill in all fields",
+        description: "Please enter email and password",
         color: "danger",
       });
       return;
@@ -58,18 +57,23 @@ function AuthPageContent() {
 
     setLoading(true);
     try {
-      const result = await signInWithEmail(email, password);
-      
-      // If we get here, the user is approved and signed in
-      addToast({
-        title: "Success",
-        description: "Signed in successfully",
-        color: "success",
+      const res = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
       });
-      
-      // Use router for proper navigation
-      router.push('/home');
-      
+
+      if (res?.error) {
+        addToast({
+          title: "Sign In Failed",
+          description: "Invalid email or password",
+          color: "danger",
+        });
+        return;
+      }
+
+      // Successful login
+      router.push("/home");
     } catch (error) {
       console.error("Sign in error:", error);
       
@@ -173,7 +177,6 @@ function AuthPageContent() {
                   type="submit"
                   color="primary"
                   className="w-full"
-                  onPress={handleEmailSignIn}
                   isLoading={loading}
                 >
                   Sign In
