@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/nextauth";
+import { resolveExternalUser } from "@/app/api/utils/resolve-user";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email?.toLowerCase() || "";
+export async function GET(request: Request) {
+  const ext = await resolveExternalUser(request);
+  const email = ext?.email?.toLowerCase() || "";
   // Basic admin guard (adjust as needed)
   if (!email.endsWith("@virtualxposure.com")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

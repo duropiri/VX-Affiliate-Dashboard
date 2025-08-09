@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/nextauth";
+import { resolveExternalUser } from "@/app/api/utils/resolve-user";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+export async function GET(request: Request) {
+  const authUser = await resolveExternalUser(request);
+  const userId = authUser?.id as string | undefined;
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -43,7 +42,7 @@ export async function GET() {
   return NextResponse.json({
     profile: {
       user_id: userId,
-      user_email: (userRow?.email || "").toLowerCase(),
+      user_email: (userRow?.email || authUser?.email || "").toLowerCase(),
       first_name: firstName,
       last_name: lastName,
       avatar_url: null,
@@ -58,8 +57,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+  const authUser = await resolveExternalUser(req);
+  const userId = authUser?.id as string | undefined;
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -68,7 +67,7 @@ export async function PUT(req: Request) {
   const payload = {
     user_id: userId,
     user_aryeo_id: body.user_aryeo_id || userId,
-    user_email: (body.user_email || (session?.user as any)?.email || "").toLowerCase(),
+    user_email: (body.user_email || authUser?.email || "").toLowerCase(),
     first_name: body.first_name,
     last_name: body.last_name,
     avatar_url: body.avatar_url || null,

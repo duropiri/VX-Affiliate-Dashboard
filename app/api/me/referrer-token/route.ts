@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/nextauth";
+import { resolveExternalUser } from "@/app/api/utils/resolve-user";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export async function PUT(req: Request) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
-  const email = (session?.user as any)?.email as string | undefined;
+  const ext = await resolveExternalUser(req);
+  const userId = (ext?.id as string | undefined);
+  const email = (ext?.email as string | undefined);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));

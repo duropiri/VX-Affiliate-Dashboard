@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/nextauth";
+import { resolveExternalUser } from "@/app/api/utils/resolve-user";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
+export async function GET(request: Request) {
+  const ext = await resolveExternalUser(request);
+  const userId = ext?.id as string | undefined;
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/nextauth";
+import { resolveExternalUser } from "@/app/api/utils/resolve-user";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 const BUCKET = process.env.NEXT_PUBLIC_AVATARS_BUCKET || "avatars";
@@ -10,9 +9,9 @@ function sanitizeFileName(name: string): string {
 }
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
-  const email = (session?.user as any)?.email as string | undefined;
+  const ext = await resolveExternalUser(request);
+  const userId = ext?.id as string | undefined;
+  const email = ext?.email as string | undefined;
 
   if (!userId || !email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -72,7 +71,7 @@ export async function POST(request: Request) {
       }
     } else {
       // Create minimal profile row with required fields
-      const fullName = (session?.user as any)?.name || "User Name";
+      const fullName = "User Name";
       const [firstName, ...rest] = fullName.split(" ");
       const lastName = rest.join(" ") || "User";
       const { error: insertErr } = await supabaseAdmin.from("affiliate_profiles").insert({
