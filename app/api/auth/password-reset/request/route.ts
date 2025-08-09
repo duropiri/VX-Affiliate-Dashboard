@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-admin";
+import { supabaseAdmin, supabaseAdminNextAuth } from "@/lib/supabase-admin";
 
 function getBaseUrl(): string {
   return (
@@ -21,19 +21,16 @@ export async function POST(req: Request) {
 
     const normalized = email.trim().toLowerCase();
 
-    // Verify that the user exists in NextAuth users table (to avoid sending for unknown emails)
-    const { data: userRow, error: userErr } = await supabaseAdmin
-      .from("next_auth.users")
+    // Verify user existence using PostgREST against next_auth.users.
+    // Note: 'next_auth' must be included in Supabase API Exposed Schemas.
+    const { data: userRow, error: queryErr } = await supabaseAdminNextAuth
+      .from("users")
       .select("id")
       .eq("email", normalized)
       .maybeSingle();
-
-    if (userErr) {
-      console.error("Password reset lookup error:", userErr);
-      return NextResponse.json(
-        { error: userErr.message || "Lookup failed" },
-        { status: 500 }
-      );
+    if (queryErr) {
+      console.error("Password reset lookup error:", queryErr);
+      return NextResponse.json({ error: queryErr.message || "Lookup failed" }, { status: 500 });
     }
 
     if (!userRow) {
