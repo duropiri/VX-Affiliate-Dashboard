@@ -25,33 +25,51 @@ function ResetPasswordContent() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    const token = searchParams.get("token");
-    const type = searchParams.get("type");
-
-    // Supabase sends a link to this page with ?type=recovery&token=...
-    // We need to exchange that for a session so updateUser() can succeed.
-    const establishSession = async () => {
+    const init = async () => {
       try {
-        if (type === "recovery" && token) {
-          const { error } = await supabase.auth.exchangeCodeForSession(token);
-          if (error) {
-            console.error("exchangeCodeForSession error:", error);
-            setError("Invalid reset link. Please request a new password reset.");
+        // Parse hash fragment (Supabase sends access_token/refresh_token in the hash)
+        if (typeof window !== "undefined" && window.location.hash) {
+          const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+          const hashType = hashParams.get("type");
+          const accessToken = hashParams.get("access_token");
+          const refreshToken = hashParams.get("refresh_token");
+          const err = hashParams.get("error");
+          const errDesc = hashParams.get("error_description");
+
+          if (err) {
+            console.error("Reset link error:", { err, errDesc });
+            setError(errDesc || "Invalid or expired reset link.");
+            return;
           }
-        } else {
-          // Fallback: check if a session already exists (some providers may redirect after verification)
-          const { data, error } = await supabase.auth.getSession();
-          if (error || !data.session) {
-            setError("Invalid reset link. Please request a new password reset.");
+
+          if (hashType === "recovery" && accessToken && refreshToken) {
+            const { error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            if (error) {
+              console.error("setSession error:", error);
+              setError("Invalid reset link. Please request a new password reset.");
+              return;
+            }
+            // Clean up hash to avoid re-processing on navigation
+            window.history.replaceState({}, document.title, window.location.pathname);
+            return; // Session is set; show form
           }
         }
+
+        // Fallback: if no hash tokens, check for an existing session
+        const { data, error } = await supabase.auth.getSession();
+        if (error || !data.session) {
+          setError("Invalid reset link. Please request a new password reset.");
+        }
       } catch (e) {
-        console.error("Session establish error:", e);
+        console.error("Reset init error:", e);
         setError("Invalid reset link. Please request a new password reset.");
       }
     };
 
-    establishSession();
+    init();
   }, [searchParams]);
 
   const handlePasswordReset = async (e: React.FormEvent) => {
