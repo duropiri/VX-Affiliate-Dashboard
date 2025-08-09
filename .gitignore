@@ -38,3 +38,9 @@ pnpm-lock.yaml
 yarn.lock
 package-lock.json
 bun.lockb
+
+# token
+token_body.json
+signin_headers.txt
+token_headers.txt
+cookie.jar

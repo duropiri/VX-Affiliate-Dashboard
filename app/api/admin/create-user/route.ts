@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveExternalUser } from '@/app/api/utils/resolve-user';
+import { supabaseAdminNextAuth } from '@/lib/supabase-admin';
 
 type UserData = {
   full_name?: string;
@@ -53,8 +55,28 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
+    // Admin auth: require a signed-in admin via cookie session or PAT
+    const ext = await resolveExternalUser(request);
+    if (!ext?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Determine requester email for admin domain check
+    let requesterEmail = ext.email?.toLowerCase() || '';
+    if (!requesterEmail) {
+      const { data: nu } = await supabaseAdminNextAuth
+        .from('users')
+        .select('email')
+        .eq('id', ext.id)
+        .maybeSingle();
+      requesterEmail = nu?.email?.toLowerCase() || '';
+    }
+    if (!requesterEmail.endsWith('@virtualxposure.com')) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { email, password, userData } = (await request.json()) as {
       email: string;
       password: string;
