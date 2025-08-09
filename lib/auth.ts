@@ -1343,7 +1343,7 @@ export const testSimpleTableQuery = async (): Promise<{success: boolean, error?:
 // Check Supabase configuration
 export const checkSupabaseConfig = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
   
   debugLog('Supabase configuration check:');
   debugLog('URL exists:', !!url);
