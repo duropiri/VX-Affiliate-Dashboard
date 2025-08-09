@@ -124,71 +124,14 @@ export default function SettingsPage() {
     setLoading(true);
 
     try {
-      // Test database connection first
-      console.log("🔍 Testing database connection...");
-      const { data: testData, error: testError } = await supabase
-        .from("affiliate_profiles")
-        .select("count")
-        .limit(1);
-
-      console.log("🔍 Database connection test:", { testData, testError });
-
-      if (testError) {
-        console.error("❌ Database connection failed:", testError);
-        addToast({
-          title: "Database connection failed",
-          description: testError.message,
-          color: "danger",
-        });
-        return;
-      }
-
-      // Test table structure
-      console.log("🔍 Testing table structure...");
-      const { data: structureData, error: structureError } = await supabase
-        .from("affiliate_profiles")
-        .select("*")
-        .limit(1);
-
-      console.log("🔍 Table structure test:", { structureData, structureError });
-
-      if (structureError) {
-        console.error("❌ Table structure error:", structureError);
-        addToast({
-          title: "Database table error",
-          description: structureError.message,
-          color: "danger",
-        });
-        return;
-      }
-
-      console.log("🔍 Getting user from Supabase...");
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        console.log("❌ No user found for profile save");
-        addToast({
-          title: "No user found",
-          color: "danger",
-        });
-        return;
-      }
-
-      console.log("✅ User found, updating profile...");
-      
-      // Prepare the profile data
+      // Prepare the profile data; server route will fill user_id/email from session
       const profileData = {
-        user_id: user.id,
-        user_aryeo_id: user.id, // Required field
-        user_email: (user.email || "").toLowerCase(),
         first_name: profile.firstName,
         last_name: profile.lastName,
         avatar_url: profile.avatarUrl,
         social_links: profile.socialLinks,
         notifications: profile.notifications,
-      };
+      } as any;
 
       console.log("📝 Profile data to save:", profileData);
 
@@ -330,30 +273,14 @@ export default function SettingsPage() {
 
       setUpdatingPassword(true);
 
-      const { data: { user }, error: getUserError } = await supabase.auth.getUser();
-      if (getUserError) {
-        addToast({ title: "Session error", description: getUserError.message, color: "danger" });
-        return;
-      }
-      if (!user || !user.email) {
-        addToast({ title: "No authenticated user", color: "danger" });
-        return;
-      }
-
-      // Verify current password by re-authenticating
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: user.email,
-        password: currentPassword,
+      const res = await fetch('/api/me/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword })
       });
-      if (signInError) {
-        addToast({ title: "Current password incorrect", color: "danger" });
-        return;
-      }
-
-      // Update to the new password
-      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
-      if (updateError) {
-        addToast({ title: "Failed to update password", description: updateError.message, color: "danger" });
+      const json = await res.json();
+      if (!res.ok) {
+        addToast({ title: 'Failed to update password', description: json?.error || 'Unknown error', color: 'danger' });
         return;
       }
 
