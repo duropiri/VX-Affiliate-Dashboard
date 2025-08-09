@@ -56,7 +56,7 @@ export default function ConnectionStatus() {
   };
 
   const getStatusColor = () => {
-    if (isChecking) return "primary" as const;
+    // if (isChecking) return "warning" as const;
     if (status.isHealthy) return "success" as const;
     if (status.consecutiveFailures > 0) return "warning" as const;
     return "danger" as const;

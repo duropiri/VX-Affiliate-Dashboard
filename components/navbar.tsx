@@ -51,31 +51,76 @@ export function Navbar() {
       (async () => {
         try {
           const res = await fetch("/api/me/profile", { cache: "no-store" });
-          if (!res.ok) return; // keep session defaults
+          if (!res.ok) {
+            // keep session defaults; if none, fallback to no avatar
+            setAvatarUrl((session as any)?.user?.image || undefined);
+            return;
+          }
           const json = await res.json();
           const p = json?.profile;
           if (p) {
-            const fullName = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+            const fullName =
+              `${p.first_name || ""} ${p.last_name || ""}`.trim();
             setDisplayName(fullName || session?.user?.email || "");
             setEmail(p.user_email || session?.user?.email || "");
-            setAvatarUrl(p.avatar_url || (session as any)?.user?.image || undefined);
+            setAvatarUrl(
+              p.avatar_url || (session as any)?.user?.image || undefined
+            );
+          } else {
+            // No profile exists: use fallback from session or default icon
+            setAvatarUrl((session as any)?.user?.image || undefined);
           }
         } catch {}
       })();
     }
   }, [status, session]);
 
+  // Listen for profile updates (e.g., avatar changed in Settings) to update immediately
+  useEffect(() => {
+    const onProfileUpdated = async (ev: Event) => {
+      const e = ev as CustomEvent<{ avatarUrl?: string }>;
+      if (e?.detail?.avatarUrl) {
+        setAvatarUrl(e.detail.avatarUrl);
+        return;
+      }
+      // If no avatar in detail, refetch profile to sync other fields
+      try {
+        const res = await fetch("/api/me/profile", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        const p = json?.profile;
+        if (p) {
+          const fullName = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+          setDisplayName(fullName || session?.user?.email || "");
+          setEmail(p.user_email || session?.user?.email || "");
+          setAvatarUrl(
+            p.avatar_url || (session as any)?.user?.image || undefined
+          );
+        }
+      } catch {}
+    };
+    window.addEventListener(
+      "vx:profileUpdated",
+      onProfileUpdated as EventListener
+    );
+    return () =>
+      window.removeEventListener(
+        "vx:profileUpdated",
+        onProfileUpdated as EventListener
+      );
+  }, [session]);
+
   const handleSignOut = async () => {
     try {
-      console.log('🔄 Signing out from navbar...');
+      console.log("🔄 Signing out from navbar...");
       await signOut();
-      
+
       addToast({
         title: "Signed Out",
         description: "You have been successfully signed out.",
         color: "success",
       });
-      
+
       // Use router.push instead of window.location for better navigation
       router.push("/auth");
     } catch (error) {
@@ -85,7 +130,7 @@ export function Navbar() {
         description: "There was an error signing out. Please try again.",
         color: "danger",
       });
-      
+
       // Force redirect even if sign out fails
       router.push("/auth");
     }
@@ -178,13 +223,15 @@ export function Navbar() {
               <div className="relative">
                 <Avatar
                   as="button"
-                   src={avatarUrl}
+                  src={avatarUrl}
+                  showFallback={true}
+                  fallback={<FaUser className="size-5" />}
                   className="transition-transform flex md:hidden"
-                   name={displayName}
+                  name={displayName}
                   size="md"
                   radius="sm"
                   isBordered={connectionStatus.isBordered}
-                  // color={connectionStatus.color}
+                  color={connectionStatus.color}
                   onClick={connectionStatus.onClick}
                   title={connectionStatus.title}
                 />
@@ -193,13 +240,13 @@ export function Navbar() {
               <div className="relative hidden md:block">
                 <HeroUser
                   as="button"
-                   avatarProps={{
+                  avatarProps={{
                     isBordered: connectionStatus.isBordered,
-                    // color: connectionStatus.color,
-                     src: avatarUrl,
-                    showFallback: false,
+                    color: connectionStatus.color,
+                    src: avatarUrl,
+                    showFallback: true,
                     fallback: <FaUser className="size-5" />,
-                    radius: "sm", 
+                    radius: "sm",
                     className: "mr-2",
                   }}
                   className="transition-transform"
@@ -227,7 +274,9 @@ export function Navbar() {
             >
               Settings
             </DropdownItem>
-            {session?.user?.email?.toLowerCase().endsWith("@virtualxposure.com") ? (
+            {session?.user?.email
+              ?.toLowerCase()
+              .endsWith("@virtualxposure.com") ? (
               <DropdownItem
                 key="admin"
                 startContent={<GrUserAdmin className="h-4 w-4" />}

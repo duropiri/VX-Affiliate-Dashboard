@@ -389,14 +389,57 @@ export default function SettingsPage() {
                   size="lg"
                   className="w-16 h-16"
                 />
-                <Button
-                  color="primary"
-                  variant="bordered"
-                  startContent={<Upload size={16} />}
-                  size="sm"
-                >
-                  Upload Photo
-                </Button>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    name="file"
+                    accept="image/*"
+                    className="hidden"
+                    id="avatar-input"
+                    onChange={async (e) => {
+                      const file = e.currentTarget.files?.[0];
+                      if (!file) return;
+                      try {
+                        setLoading(true);
+                        const formData = new FormData();
+                        formData.append("file", file);
+                        const res = await fetch("/api/me/profile/avatar", {
+                          method: "POST",
+                          body: formData,
+                        });
+                        const json = await res.json();
+                        if (!res.ok) {
+                          addToast({ title: "Upload failed", description: json?.error || "Unknown error", color: "danger" });
+                          return;
+                        }
+                        setProfile((prev) => ({ ...prev, avatarUrl: json.avatarUrl }));
+                        // Notify other parts of the app (e.g., navbar) to refresh avatar immediately
+                        try {
+                          window.dispatchEvent(new CustomEvent("vx:profileUpdated", { detail: { avatarUrl: json.avatarUrl } }));
+                        } catch {}
+                        addToast({ title: "Photo updated", color: "success" });
+                      } catch (err: any) {
+                        addToast({ title: "Upload error", description: err?.message || "Unknown error", color: "danger" });
+                      } finally {
+                        setLoading(false);
+                        // allow selecting the same file again
+                        e.currentTarget.value = "";
+                      }
+                    }}
+                  />
+                  <label htmlFor="avatar-input">
+                    <Button
+                      as={"span"}
+                      color="primary"
+                      variant="bordered"
+                      startContent={<Upload size={16} />}
+                      size="sm"
+                      className="cursor-pointer"
+                    >
+                      Choose Photo
+                    </Button>
+                  </label>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
