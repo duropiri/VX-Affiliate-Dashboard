@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { resolveExternalUser } from "@/app/api/utils/resolve-user";
 
-export async function DELETE(request: Request, context: { params: { id: string } }) {
+export async function DELETE(request: Request) {
   const ext = await resolveExternalUser(request);
   if (!ext?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const id = context.params.id;
+  const url = new URL(request.url);
+  const parts = url.pathname.replace(/\/+$/, "").split("/");
+  const id = parts[parts.length - 1];
   const { error } = await supabaseAdmin
     .from("api_keys")
     .delete()
