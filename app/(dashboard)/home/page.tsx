@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { ReferralCard } from "@/components/referral-card";
 import { StatsBar } from "@/components/stats-bar";
 import { Card, CardBody, CardHeader, Link, Spinner, Button } from "@heroui/react";
@@ -33,17 +34,7 @@ export default function HomePage() {
       setLoading(true);
       setError(null);
 
-      console.log("🔍 Getting user from Supabase...");
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      console.log("👤 User:", user?.email, "ID:", user?.id);
-
-      if (!user) {
-        throw new Error("No authenticated user found");
-      }
-
-      console.log("✅ User found, loading data...");
+      console.log("✅ Session active, loading data...");
 
       // Load data in parallel
       console.log("📊 Starting data queries...");
@@ -56,7 +47,7 @@ export default function HomePage() {
             const json = await res.json();
             return json.code as string | null;
           } catch (e) {
-            return await getReferralCode(user.id);
+            throw e;
           }
         })(),
         (async () => {
@@ -111,11 +102,13 @@ export default function HomePage() {
     }
   };
 
+  const { status, data: session } = useSession();
   useEffect(() => {
+    if (status !== "authenticated") return;
     if (didInitRef.current) return;
     didInitRef.current = true;
     loadData(true);
-  }, []);
+  }, [status]);
 
   // Option B: re-fetch on navigation/focus/online, bypassing cache
   useEffect(() => {
@@ -136,14 +129,14 @@ export default function HomePage() {
   useEffect(() => {
     let unsub: (() => void) | undefined;
     (async () => {
-      const user = await getUser();
-      if (!user) return;
-      unsub = subscribeToUserKpis(user.id, async () => {
+      const userId = (session?.user as any)?.id as string | undefined;
+      if (!userId) return;
+      unsub = subscribeToUserKpis(userId, async () => {
         await loadData(true);
       });
     })();
     return () => { unsub?.(); };
-  }, []);
+  }, [session?.user]);
 
   const handleRetry = async () => {
     setRetrying(true);
