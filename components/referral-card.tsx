@@ -140,15 +140,28 @@ export function ReferralCard({ referralCode }: ReferralCardProps) {
                 <Button variant="bordered" onPress={onClose}>Cancel</Button>
                 <Button color="primary" isLoading={saving} onPress={async () => {
                   setSaving(true);
-                  const res = await updateReferralCodeForCurrentUser(token);
-                  setSaving(false);
-                  if (!res.success) {
-                    setError(res.error || 'Failed to update token');
-                    addToast({ title: res.error || 'Failed to update token', color: 'danger' });
-                    return;
+                  try {
+                    const res = await fetch('/api/me/referrer-token', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ token })
+                    });
+                    const json = await res.json();
+                    if (!res.ok || !json?.success) {
+                      const msg = json?.error || 'Failed to update token';
+                      setError(msg);
+                      addToast({ title: msg, color: 'danger' });
+                      setSaving(false);
+                      return;
+                    }
+                    addToast({ title: 'Token updated', color: 'success' });
+                    setSaving(false);
+                    onClose();
+                  } catch (e) {
+                    setSaving(false);
+                    setError('Failed to update token');
+                    addToast({ title: 'Failed to update token', color: 'danger' });
                   }
-                  addToast({ title: 'Token updated', color: 'success' });
-                  onClose();
                 }}>Save</Button>
               </ModalFooter>
             </>
