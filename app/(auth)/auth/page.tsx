@@ -73,6 +73,11 @@ function AuthPageContent() {
       }
 
       // Successful login
+      addToast({
+        title: "Signed in",
+        description: "Welcome back!",
+        color: "success",
+      });
       router.push("/home");
     } catch (error) {
       console.error("Sign in error:", error);

@@ -5,10 +5,10 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  const userId = (session?.user as any)?.id as string | undefined;
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const userId = (session.user as any).id as string;
 
   // Try affiliate_profiles first
   const { data: profile, error } = await supabaseAdmin
@@ -59,16 +59,16 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  const userId = (session?.user as any)?.id as string | undefined;
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const userId = (session.user as any).id as string;
   const body = await req.json();
 
   const payload = {
     user_id: userId,
     user_aryeo_id: body.user_aryeo_id || userId,
-    user_email: (body.user_email || session.user?.email || "").toLowerCase(),
+    user_email: (body.user_email || (session?.user as any)?.email || "").toLowerCase(),
     first_name: body.first_name,
     last_name: body.last_name,
     avatar_url: body.avatar_url || null,

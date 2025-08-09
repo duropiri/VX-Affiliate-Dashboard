@@ -29,117 +29,13 @@ export default function UsersPage() {
     try {
       setLoading(true);
       
-      console.log('Loading approved users...');
-      
-      // First get approved users
-      const { data: approvedUsers, error: approvedError } = await supabase
-        .from('approved_users')
-        .select('id, user_id, user_email, status, created_at')
-        .eq('status', 'active')
-        .order('created_at', { ascending: false });
-
-      console.log('Approved users query result:', { data: approvedUsers, error: approvedError });
-
-      if (approvedError) {
-        console.error('Error loading approved users:', approvedError);
-        addToast({
-          title: 'Failed to load approved users',
-          description: approvedError.message,
-          color: 'danger',
-        });
-        return;
-      }
-
-      // Handle case where no approved users exist
-      if (!approvedUsers || approvedUsers.length === 0) {
-        console.log('No approved users found');
-        setUsers([]);
-        addToast({
-          title: 'No approved users found',
-          description: 'Create your first affiliate user using the admin panel',
-          color: 'warning',
-        });
-        return;
-      }
-
-      console.log(`Found ${approvedUsers.length} approved users`);
-
-      // Then get profiles and referral codes separately
-      const userIds = approvedUsers.map(user => user.user_id);
-      console.log('User IDs to fetch:', userIds);
-      
-      // Get profiles
-      const { data: profiles, error: profilesError } = await supabase
-        .from('affiliate_profiles')
-        .select('user_id, first_name, last_name')
-        .in('user_id', userIds);
-
-      console.log('Profiles query result:', { data: profiles, error: profilesError });
-
-      if (profilesError) {
-        console.error('Error loading profiles:', profilesError);
-        addToast({
-          title: 'Failed to load user profiles',
-          description: profilesError.message,
-          color: 'danger',
-        });
-        return;
-      }
-
-      // Get referral codes
-      const { data: referrers, error: referrersError } = await supabase
-        .from('affiliate_referrers')
-        .select('user_id, code')
-        .in('user_id', userIds);
-
-      console.log('Referrers query result:', { data: referrers, error: referrersError });
-
-      if (referrersError) {
-        console.error('Error loading referral codes:', referrersError);
-        addToast({
-          title: 'Failed to load referral codes',
-          description: referrersError.message,
-          color: 'danger',
-        });
-        return;
-      }
-
-      // Create lookup maps
-      const profilesMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
-      const referrersMap = new Map(referrers?.map(r => [r.user_id, r]) || []);
-
-      console.log('Profiles map size:', profilesMap.size);
-      console.log('Referrers map size:', referrersMap.size);
-
-      // Combine the data
-      const transformedUsers: UserRecord[] = approvedUsers.map(user => {
-        const profile = profilesMap.get(user.user_id);
-        const referrer = referrersMap.get(user.user_id);
-        
-        console.log(`Processing user ${user.user_email}:`, {
-          hasProfile: !!profile,
-          hasReferrer: !!referrer,
-          profile: profile,
-          referrer: referrer
-        });
-        
-        return {
-          id: user.id,
-          user_id: user.user_id,
-          user_email: user.user_email,
-          first_name: profile?.first_name || 'Unknown',
-          last_name: profile?.last_name || 'User',
-          status: user.status,
-          created_at: user.created_at,
-          referral_code: referrer?.code,
-        };
-      });
-
-      console.log('Final transformed users:', transformedUsers);
-      setUsers(transformedUsers);
+      const res = await fetch('/api/admin/users', { cache: 'no-store' });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setUsers(json.users || []);
       
       addToast({
-        title: `Loaded ${transformedUsers.length} users successfully`,
+        title: `Loaded ${json.users?.length || 0} users successfully`,
         color: 'success',
       });
     } catch (error) {

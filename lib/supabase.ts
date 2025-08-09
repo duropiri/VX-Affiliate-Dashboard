@@ -13,7 +13,7 @@ const debugLog = (message: string, ...args: any[]) => {
 // Enhanced Supabase client with proper session persistence and auto-refresh
 export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   {
     cookies: {
       // Required for SSR client - check if we're in browser environment

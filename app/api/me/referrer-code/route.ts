@@ -5,8 +5,8 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) return NextResponse.json({ code: null });
-  const userId = (session.user as any).id as string;
+  const userId = (session?.user as any)?.id as string | undefined;
+  if (!userId) return NextResponse.json({ code: null });
   const { data, error } = await supabaseAdmin
     .from("affiliate_referrers")
     .select("code")

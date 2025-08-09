@@ -5,11 +5,10 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  const userId = (session?.user as any)?.id as string | undefined;
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
-  const userId = (session.user as any).id as string;
 
   const { data, error } = await supabaseAdmin
     .from("dashboard_kpis")
