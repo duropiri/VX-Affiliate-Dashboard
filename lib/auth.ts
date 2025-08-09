@@ -71,13 +71,16 @@ export const createUserWithPassword = async (email: string, password: string, us
 };
 
 export const resetPassword = async (email: string) => {
+  // Kept for backward compatibility. Prefer calling the server endpoint from the UI.
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${getBaseUrl()}/auth/reset-password`,
+    const res = await fetch('/api/auth/password-reset/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
     });
-    
-    if (error) {
-      throw error; // Throw to trigger retry/timeout logic
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || 'Failed to send reset email');
     }
   } catch (error) {
     console.error('Error resetting password:', error);
