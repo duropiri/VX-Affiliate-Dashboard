@@ -138,25 +138,66 @@ export async function POST(request: Request) {
 
     // ---- DB writes (idempotent-ish) --------------------------------------
 
-    // 1) approved_users: activate or insert
+    // 1) approved_users: activate or insert (manual upsert to avoid onConflict requirements)
     {
-      const { error: approveError } = await supabaseAdmin
+      const { data: existingApproved, error: approvedFetchErr } = await supabaseAdmin
         .from('approved_users')
-        .upsert(
-          {
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (approvedFetchErr && approvedFetchErr.code !== 'PGRST116') {
+        console.error('Error reading approved_users record:', approvedFetchErr);
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+      }
+
+      if (existingApproved?.id) {
+        let { error: approveUpdateErr } = await supabaseAdmin
+          .from('approved_users')
+          .update({
+            approved_by: 'admin',
+            status: 'active',
+            notes: userData?.notes ?? 'Created via admin interface',
+          })
+          .eq('user_id', userId);
+        // Fallback if some columns don't exist in this environment
+        if (approveUpdateErr && approveUpdateErr.code === '42703') {
+          console.warn('approved_users missing columns; retrying update with minimal fields');
+          const minimal = await supabaseAdmin
+            .from('approved_users')
+            .update({ status: 'active' })
+            .eq('user_id', userId);
+          approveUpdateErr = minimal.error as any;
+        }
+        if (approveUpdateErr) {
+          console.error('Error updating approved_users record:', approveUpdateErr);
+          await supabaseAdmin.auth.admin.deleteUser(userId);
+          return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+        }
+      } else {
+        let { error: approveInsertErr } = await supabaseAdmin
+          .from('approved_users')
+          .insert({
             user_id: userId,
             user_email: email.toLowerCase(),
             approved_by: 'admin',
             status: 'active',
             notes: userData?.notes ?? 'Created via admin interface',
-          },
-          { onConflict: 'user_id' }
-        );
-
-      if (approveError) {
-        console.error('Error upserting approved_users record:', approveError);
-        await supabaseAdmin.auth.admin.deleteUser(userId);
-        return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+          });
+        // Fallback if some columns don't exist in this environment
+        if (approveInsertErr && approveInsertErr.code === '42703') {
+          console.warn('approved_users missing columns; retrying insert with minimal fields');
+          const minimal = await supabaseAdmin
+            .from('approved_users')
+            .insert({ user_id: userId, user_email: email.toLowerCase(), status: 'active' });
+          approveInsertErr = minimal.error as any;
+        }
+        if (approveInsertErr) {
+          console.error('Error inserting approved_users record:', approveInsertErr);
+          await supabaseAdmin.auth.admin.deleteUser(userId);
+          return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+        }
       }
     }
 
