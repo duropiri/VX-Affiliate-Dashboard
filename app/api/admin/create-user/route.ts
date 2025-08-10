@@ -129,6 +129,49 @@ export async function POST(request: Request) {
     const userId = data.user.id;
     const firstName = names.firstName;
     const lastName = names.lastName;
+    // 0) ensure there is a next_auth.users row with the SAME id (FKs reference next_auth.users)
+    {
+      const fullName = (userData?.full_name || `${firstName} ${lastName}`).trim();
+      let { error: upsertUserErr } = await supabaseAdminNextAuth
+        .from('users')
+        .upsert(
+          {
+            id: userId,
+            email: email.toLowerCase(),
+            name: fullName || null,
+            image: userData?.avatar_url || userData?.picture || null,
+          },
+          { onConflict: 'id' }
+        );
+      // If unique email exists under a different id, replace it with the new id
+      if (upsertUserErr && upsertUserErr.code === '23505') {
+        const { data: existingByEmail } = await supabaseAdminNextAuth
+          .from('users')
+          .select('id')
+          .eq('email', email.toLowerCase())
+          .maybeSingle();
+        if (existingByEmail?.id && existingByEmail.id !== userId) {
+          await supabaseAdminNextAuth.from('users').delete().eq('id', existingByEmail.id);
+          const retry = await supabaseAdminNextAuth
+            .from('users')
+            .upsert({ id: userId, email: email.toLowerCase(), name: fullName || null, image: userData?.avatar_url || userData?.picture || null }, { onConflict: 'id' });
+          upsertUserErr = retry.error as any;
+        }
+      }
+      if (upsertUserErr && upsertUserErr.code === '42703') {
+        // Column naming mismatch safety: retry with minimal columns
+        const minimal = await supabaseAdminNextAuth
+          .from('users')
+          .upsert({ id: userId, email: email.toLowerCase() }, { onConflict: 'id' });
+        upsertUserErr = minimal.error as any;
+      }
+      if (upsertUserErr) {
+        console.error('Error ensuring next_auth.users row exists:', upsertUserErr);
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        return NextResponse.json({ error: 'Failed to sync user directory', code: upsertUserErr.code, details: upsertUserErr.message }, { status: 500 });
+      }
+    }
+
 
     // IMPORTANT: allow aryeo id from payload; fallback to previous behavior (userId) to avoid breaking old flows
     const userAryeoId = userData?.user_aryeo_id ?? userId;
@@ -149,7 +192,7 @@ export async function POST(request: Request) {
       if (approvedFetchErr && approvedFetchErr.code !== 'PGRST116') {
         console.error('Error reading approved_users record:', approvedFetchErr);
         await supabaseAdmin.auth.admin.deleteUser(userId);
-        return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to approve user', code: approvedFetchErr.code, details: approvedFetchErr.message }, { status: 500 });
       }
 
       if (existingApproved?.id) {
@@ -173,7 +216,7 @@ export async function POST(request: Request) {
         if (approveUpdateErr) {
           console.error('Error updating approved_users record:', approveUpdateErr);
           await supabaseAdmin.auth.admin.deleteUser(userId);
-          return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+          return NextResponse.json({ error: 'Failed to approve user', code: approveUpdateErr.code, details: approveUpdateErr.message }, { status: 500 });
         }
       } else {
         let { error: approveInsertErr } = await supabaseAdmin
@@ -196,7 +239,7 @@ export async function POST(request: Request) {
         if (approveInsertErr) {
           console.error('Error inserting approved_users record:', approveInsertErr);
           await supabaseAdmin.auth.admin.deleteUser(userId);
-          return NextResponse.json({ error: 'Failed to approve user' }, { status: 500 });
+          return NextResponse.json({ error: 'Failed to approve user', code: approveInsertErr.code, details: approveInsertErr.message }, { status: 500 });
         }
       }
     }
