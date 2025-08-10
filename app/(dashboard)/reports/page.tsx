@@ -20,7 +20,6 @@ import {
   Button,
 } from "@heroui/react";
 import {
-  LineChart,
   DollarSign,
   MousePointer,
   UserPlus,
@@ -30,7 +29,6 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
-import { UserReports, DailyData, formatDateDisplayMDT, shouldAggregateByMonth } from "@/lib/auth";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -43,6 +41,14 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 import { addToast } from "@heroui/toast";
+
+import {
+  UserReports,
+  DailyData,
+  formatDateDisplayMDT,
+  shouldAggregateByMonth,
+  transformUserReports,
+} from "@/lib/auth";
 
 // Consistent timezone for display (matches lib/auth TIMEZONE)
 const DISPLAY_TZ = "America/Edmonton";
@@ -62,37 +68,24 @@ ChartJS.register(
   LineElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
 );
 
 export default function ReportsPage() {
+  const [rawReports, setRawReports] = useState<any>(null);
   const [reports, setReports] = useState<UserReports | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTimeframe, setSelectedTimeframe] = useState("Last 30 Days");
-  const [filteredData, setFilteredData] = useState<DailyData[]>([]);
   const [selectedTab, setSelectedTab] = useState("overview");
   const [retrying, setRetrying] = useState(false);
 
   // Function to download CSV
   const downloadCSV = () => {
-    if (!filteredData || filteredData.length === 0) {
-      console.log("No data to download");
+    if (!reports?.dailyData || reports.dailyData.length === 0) {
       return;
     }
-
-    // Filter data for "This Year" timeframe
-    const tableData = filteredData.filter((item) => {
-      const itemDate = new Date(item.date);
-      const currentYear = new Date().getFullYear();
-
-      if (selectedTimeframe === "This Year") {
-        return itemDate.getFullYear() === currentYear;
-      }
-
-      return true;
-    });
 
     // Create CSV content
     const headers = [
@@ -105,7 +98,7 @@ export default function ReportsPage() {
 
     const csvContent = [
       headers.join(","),
-      ...tableData
+      ...reports.dailyData
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .map((item) => {
           const date = shouldAggregateByMonth(selectedTimeframe)
@@ -126,10 +119,11 @@ export default function ReportsPage() {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
+
     link.setAttribute("href", url);
     link.setAttribute(
       "download",
-      `reports-${selectedTimeframe.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.csv`
+      `reports-${selectedTimeframe.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.csv`,
     );
     link.style.visibility = "hidden";
     document.body.appendChild(link);
@@ -140,59 +134,41 @@ export default function ReportsPage() {
   // Load reports from database
   const loadReports = async (isTimeframeChange = false) => {
     try {
-      console.log("🔄 Loading reports from database...");
       if (isTimeframeChange) {
         setChartLoading(true);
       } else {
         setLoading(true);
       }
       setError(null);
-      
+
       // Fetch raw user_reports server-side to avoid client RLS/caching
       const res = await fetch("/api/me/reports/raw", { cache: "no-store" });
+
       if (!res.ok) throw new Error(await res.text());
       const json = await res.json();
       const userReports = json?.user_reports;
 
-      if (!userReports) throw new Error("No reports data returned from database");
+      if (!userReports)
+        throw new Error("No reports data returned from database");
 
-      // Build the transformed structure like before using transformUserReports
-      // Minimal inline transform for this page
-      const overview = userReports.overview || {};
-      const allDates = Object.keys(overview).sort();
-      const dailyData: DailyData[] = allDates.map((dateKey: string) => ({
-        date: dateKey,
-        earnings: overview[dateKey]?.earnings || 0,
-        newCustomers: overview[dateKey]?.customers || 0,
-        newReferrals: overview[dateKey]?.signups || 0,
-        clicksCount: overview[dateKey]?.clicks || 0,
-      }));
+      // Store raw reports data
+      setRawReports(userReports);
 
-      const totals = dailyData.reduce(
-        (acc, d) => ({
-          earnings: acc.earnings + d.earnings,
-          clicks: acc.clicks + d.clicksCount,
-          signups: acc.signups + d.newReferrals,
-          customers: acc.customers + d.newCustomers,
-        }),
-        { earnings: 0, clicks: 0, signups: 0, customers: 0 }
+      // Transform the data using the proper timeframe filtering
+      const transformedReports = transformUserReports(
+        userReports,
+        selectedTimeframe,
       );
 
-      const reportsData: UserReports = {
-        overview: totals,
-        dailyData,
-      } as any;
-
-      if (reportsData) {
-        console.log("✅ Reports loaded:", reportsData);
-        setReports(reportsData);
-        setFilteredData(reportsData.dailyData || []);
+      if (transformedReports) {
+        setReports(transformedReports);
       } else {
-        throw new Error("No reports data returned from database");
+        throw new Error("Failed to transform reports data");
       }
     } catch (err) {
-      console.error("❌ Error loading reports:", err);
-      const errorMessage = err instanceof Error ? err.message : "Failed to load reports";
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load reports";
+
       setError(errorMessage);
       addToast({
         title: "Error Loading Reports",
@@ -208,15 +184,29 @@ export default function ReportsPage() {
     }
   };
 
+  // Update reports when timeframe changes
   useEffect(() => {
-    // Initial load
-    if (!reports) {
-      loadReports(false);
+    if (rawReports) {
+      // If we have raw data, just transform it with the new timeframe
+      const transformedReports = transformUserReports(
+        rawReports,
+        selectedTimeframe,
+      );
+
+      setReports(transformedReports);
+      setChartLoading(false);
     } else {
-      // Timeframe change - only load chart data
-      loadReports(true);
+      // Initial load
+      loadReports(false);
     }
   }, [selectedTimeframe]);
+
+  // Initial load
+  useEffect(() => {
+    if (!rawReports) {
+      loadReports(false);
+    }
+  }, []);
 
   const handleRetry = async () => {
     setRetrying(true);
@@ -230,8 +220,8 @@ export default function ReportsPage() {
       <div className="min-h-screen flex items-center justify-center">
         <Spinner
           classNames={{ label: "text-foreground mt-4" }}
-          variant="default"
           size="lg"
+          variant="default"
         />
       </div>
     );
@@ -243,17 +233,19 @@ export default function ReportsPage() {
       <div className="space-y-6">
         <div className="text-center py-12">
           <div className="text-gray-500 mb-6">
-            <AlertCircle size={48} className="mx-auto mb-4 text-red-500" />
+            <AlertCircle className="mx-auto mb-4 text-red-500" size={48} />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Error Loading Reports
             </h3>
-            <p className="text-gray-600 mb-4">{error || "No reports available"}</p>
+            <p className="text-gray-600 mb-4">
+              {error || "No reports available"}
+            </p>
             <Button
               color="primary"
-              variant="flat"
-              startContent={<RefreshCw size={16} />}
-              onPress={handleRetry}
               isLoading={retrying}
+              startContent={<RefreshCw size={16} />}
+              variant="flat"
+              onPress={handleRetry}
             >
               Retry
             </Button>
@@ -263,42 +255,9 @@ export default function ReportsPage() {
     );
   }
 
-  // Calculate aggregated totals for the selected timeframe
-  const getAggregatedTotals = () => {
-    if (!filteredData || filteredData.length === 0) {
-      return {
-        earnings: reports.overview.earnings,
-        clicks: reports.overview.clicks,
-        signups: reports.overview.signups,
-        customers: reports.overview.customers,
-      };
-    }
-
-    return filteredData.reduce(
-      (totals, item) => ({
-        earnings: totals.earnings + item.earnings,
-        clicks: totals.clicks + item.clicksCount,
-        signups: totals.signups + item.newReferrals, // Using newReferrals as signups
-        customers: totals.customers + item.newCustomers,
-      }),
-      { earnings: 0, clicks: 0, signups: 0, customers: 0 }
-    );
-  };
-
-  const aggregatedTotals = getAggregatedTotals();
-
-  // Process chart data from user_reports for overview tab only
+  // Process chart data from transformed reports
   const processChartData = () => {
-    if (!reports) {
-      return {
-        labels: [],
-        datasets: [],
-        title: "",
-      };
-    }
-
-    // Use filtered data for chart (same data as table)
-    if (!filteredData || filteredData.length === 0) {
+    if (!reports?.dailyData || reports.dailyData.length === 0) {
       return {
         labels: [],
         datasets: [],
@@ -307,8 +266,8 @@ export default function ReportsPage() {
     }
 
     // Sort data by date (oldest to newest for chart)
-    const sortedData = [...filteredData].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    const sortedData = [...reports.dailyData].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
     );
 
     const labels = sortedData.map((item) => {
@@ -324,7 +283,6 @@ export default function ReportsPage() {
     // Get the selected stat based on the active tab
     let selectedStat = "Earnings";
     let dataKey: keyof DailyData = "earnings";
-    let borderColor = "rgb(75, 192, 192)";
     let backgroundColor = "rgba(75, 192, 192, 0.5)";
 
     switch (selectedTab) {
@@ -332,19 +290,16 @@ export default function ReportsPage() {
         selectedStat = "Earnings";
         dataKey = "earnings";
         backgroundColor = "rgb(75, 192, 192)";
-
         break;
       case "Clicks":
         selectedStat = "Clicks";
         dataKey = "clicksCount";
         backgroundColor = "rgb(255, 99, 132)";
-
         break;
       case "Customers":
         selectedStat = "New Customers";
         dataKey = "newCustomers";
         backgroundColor = "rgb(54, 162, 235)";
-
         break;
       case "Signups":
         selectedStat = "New Referrals";
@@ -439,25 +394,25 @@ export default function ReportsPage() {
   const summaryStats = [
     {
       title: "Earnings",
-      value: `$${aggregatedTotals.earnings.toFixed(2)}`,
+      value: `$${reports.overview.earnings.toFixed(2)}`,
       icon: DollarSign,
       highlighted: true,
     },
     {
       title: "Clicks",
-      value: aggregatedTotals.clicks.toLocaleString(),
+      value: reports.overview.clicks.toLocaleString(),
       icon: MousePointer,
       highlighted: false,
     },
     {
       title: "Signups",
-      value: aggregatedTotals.signups.toLocaleString(),
+      value: reports.overview.signups.toLocaleString(),
       icon: UserPlus,
       highlighted: false,
     },
     {
       title: "Customers",
-      value: aggregatedTotals.customers.toLocaleString(),
+      value: reports.overview.customers.toLocaleString(),
       icon: Users,
       highlighted: false,
     },
@@ -483,10 +438,10 @@ export default function ReportsPage() {
           <h1 className="text-3xl font-bold text-gray-900">Reports</h1>
           <Button
             isIconOnly
-            variant="light"
             className="text-gray-600"
+            isDisabled={!reports?.dailyData || reports.dailyData.length === 0}
+            variant="light"
             onPress={downloadCSV}
-            isDisabled={!filteredData || filteredData.length === 0}
           >
             <DownloadIcon size={20} />
           </Button>
@@ -513,11 +468,11 @@ export default function ReportsPage() {
                       <Dropdown>
                         <DropdownTrigger>
                           <Button
-                            variant="light"
+                            className="min-w-[200px]"
                             color="primary"
                             endContent={<ChevronDownIcon size={16} />}
-                            className="min-w-[200px]"
                             isLoading={chartLoading}
+                            variant="light"
                           >
                             <span className="text-sm font-semibold">
                               Timeframe:
@@ -526,13 +481,14 @@ export default function ReportsPage() {
                           </Button>
                         </DropdownTrigger>
                         <DropdownMenu
-                          aria-label="Timeframe selection"
                           disallowEmptySelection
+                          aria-label="Timeframe selection"
+                          selectedKeys={new Set([selectedTimeframe])}
                           selectionMode="single"
                           variant="flat"
-                          selectedKeys={new Set([selectedTimeframe])}
                           onSelectionChange={(keys) => {
                             const selected = Array.from(keys)[0] as string;
+
                             if (selected && selected !== selectedTimeframe) {
                               setSelectedTimeframe(selected);
                             }
@@ -548,13 +504,9 @@ export default function ReportsPage() {
 
                   {/* Summary Cards */}
                   <Tabs
-                    placement="bottom"
-                    fullWidth
                     disableAnimation
                     disableCursorAnimation
-                    size="lg"
-                    radius="none"
-                    variant="underlined"
+                    fullWidth
                     classNames={{
                       tabList:
                         "gap-0 w-full relative rounded-none p-0 border-b border-divider grid grid-cols-2 lg:grid-cols-4",
@@ -564,6 +516,10 @@ export default function ReportsPage() {
                         "p-0 m-0 size-full flex flex-col items-center justify-center bg-white",
                       base: "w-full h-auto",
                     }}
+                    placement="bottom"
+                    radius="none"
+                    size="lg"
+                    variant="underlined"
                     onSelectionChange={(key) => {
                       setSelectedTab(key as string);
                     }}
@@ -596,8 +552,8 @@ export default function ReportsPage() {
                               <div className="flex items-center justify-center h-full">
                                 <Spinner
                                   classNames={{ label: "text-foreground mt-4" }}
-                                  variant="default"
                                   size="lg"
+                                  variant="default"
                                 />
                               </div>
                             ) : (
@@ -625,21 +581,10 @@ export default function ReportsPage() {
                   <TableColumn>Clicks count</TableColumn>
                 </TableHeader>
                 <TableBody>
-                  {(filteredData || [])
-                    .filter((item) => {
-                      // Additional client-side filtering to ensure correct timeframe
-                      const itemDate = new Date(item.date);
-                      const currentYear = new Date().getFullYear();
-
-                      if (selectedTimeframe === "This Year") {
-                        return itemDate.getFullYear() === currentYear;
-                      }
-
-                      return true; // For other timeframes, trust the backend data
-                    })
+                  {(reports.dailyData || [])
                     .sort(
                       (a, b) =>
-                        new Date(b.date).getTime() - new Date(a.date).getTime()
+                        new Date(b.date).getTime() - new Date(a.date).getTime(),
                     )
                     .map((item, index) => (
                       <TableRow key={index}>
@@ -661,12 +606,12 @@ export default function ReportsPage() {
           <Tab key="links" title="Links">
             <div className="text-center py-12">
               <div className="text-gray-500 mb-4">
-                <Users size={48} className="mx-auto mb-4" />
+                <Users className="mx-auto mb-4" size={48} />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   No Links Found
                 </h3>
                 <p className="text-gray-600">
-                  You haven't made any referrals yet. Start sharing your
+                  You haven&apos;t made any referrals yet. Start sharing your
                   referral link to see your links!
                 </p>
               </div>
@@ -675,12 +620,12 @@ export default function ReportsPage() {
           <Tab key="traffic" title="Traffic sources">
             <div className="text-center py-12">
               <div className="text-gray-500 mb-4">
-                <Users size={48} className="mx-auto mb-4" />
+                <Users className="mx-auto mb-4" size={48} />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   No Traffic Sources Found
                 </h3>
                 <p className="text-gray-600">
-                  You haven't made any referrals yet. Start sharing your
+                  You haven&apos;t made any referrals yet. Start sharing your
                   referral link to see your traffic sources!
                 </p>
               </div>
@@ -689,12 +634,12 @@ export default function ReportsPage() {
           <Tab key="subids" title="Sub-Ids">
             <div className="text-center py-12">
               <div className="text-gray-500 mb-4">
-                <Users size={48} className="mx-auto mb-4" />
+                <Users className="mx-auto mb-4" size={48} />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   No Sub-Ids Found
                 </h3>
                 <p className="text-gray-600">
-                  You haven't made any referrals yet. Start sharing your
+                  You haven&apos;t made any referrals yet. Start sharing your
                   referral link to see your sub-ids!
                 </p>
               </div>
